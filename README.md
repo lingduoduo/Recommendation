@@ -26,14 +26,32 @@ Data Collection: Gather reviews from the app stores you want to analyze. You may
 Preprocessing: Clean and preprocess the collected reviews to remove irrelevant information, such as special characters, emojis, or URLs. You may also need to handle text normalization tasks like lowercasing, stemming, or lemmatization.
 
 Retrieval:
+
+1. Association Rules (support, confidence)
+   
+2. Similarity/Clustering
 - Product and contents
+- User behavior (purchased items, last view items, etc)
+- Contextual features
+- Timestamp(morning, afternoon, evening), Geographic, weather, device, etc
+- User clustering, naive bayesian 
+  
 Sim(V1, V2) = cosine similarity/jaccard similarity
 
-- User behavior (purchased items, last view items, etc)
-CF(item-based/user-based), FM, user clustering, naive bayesian 
+3. CF
+CF (user-based CF) and (item-based CF)
+MF(matrix factoriaztion) = user profile latent factor * product profile latent factor
 
-- Contextual features
-Timestamp(morning, afternoon, evening), Geographic, weather, device, etc
+4.Factorization machine
+The dot product of user vector and item vector represents the user's preference for the item
+
+5.Embedding
+Word2Vec(COBW and Sip-Gram)
+Item2vec
+FB Faiss
+
+6. Deep Learning
+DNN
 
 Ranking: Calculate the frequency or importance of each identified topic or reason across the reviews. You can use metrics like term frequency (TF), term frequency-inverse document frequency (TF-IDF), or more advanced methods like TextRank or LDA topic coherence.
 
