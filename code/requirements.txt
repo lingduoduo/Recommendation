@@ -17,3 +17,4 @@ tensorflow
 tensorflow-probability
 tensorflow_datasets
 nltk
+faiss-cpu
