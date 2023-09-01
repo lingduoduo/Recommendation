@@ -1,3 +1,4 @@
+
 ## Recommendation
 
 https://amatriain.net/blog/RecsysArchitectures
@@ -42,3 +43,5 @@ https://amatriain.net/blog/RecsysArchitectures
 ### 混排
 
 多个业务线都想在Feeds流中获取曝光，则需要对它们的结果进行混排。比如推荐流中插入广告、视频流中插入图文和banner等。可以基于规则策略（如广告定坑）和强化学习来实现。
+
+
