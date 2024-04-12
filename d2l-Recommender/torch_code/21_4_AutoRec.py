@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn.functional import mse_loss
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 import torch.optim as optim
 from d2l import torch as d2l
@@ -8,6 +9,7 @@ from d2l import torch as d2l
 import os
 import pandas as pd
 import numpy as np
+
 
 d2l.DATA_HUB['ml-100k'] = (
     'https://files.grouplens.org/datasets/movielens/ml-100k.zip',
@@ -21,18 +23,6 @@ def read_data_ml100k():
     num_users = data.user_id.unique().shape[0]
     num_items = data.item_id.unique().shape[0]
     return data, num_users, num_items
-
-data, num_users, num_items = read_data_ml100k()
-sparsity = 1 - len(data) / (num_users * num_items)
-print(f'number of users: {num_users}, number of items: {num_items}')
-print(f'matrix sparsity: {sparsity:f}')
-print(data.head(5))
-
-d2l.plt.hist(data['rating'], bins=5, ec='black')
-d2l.plt.xlabel('Rating')
-d2l.plt.ylabel('Count')
-d2l.plt.title('Distribution of Ratings in MovieLens 100K')
-d2l.plt.show()
 
 def split_data_ml100k(data, num_users, num_items,
                       split_mode='random', test_ratio=0.1):
@@ -96,38 +86,42 @@ def split_and_load_ml100k(split_mode='seq-aware', feedback='explicit',
     
     return num_users, num_items, train_iter, test_iter
 
-class MF(nn.Module):
-    def __init__(self, num_factors, num_users, num_items):
-        super(MF, self).__init__()
-        self.P = nn.Embedding(num_embeddings=num_users, embedding_dim=num_factors)
-        self.Q = nn.Embedding(num_embeddings=num_items, embedding_dim=num_factors)
-        self.user_bias = nn.Embedding(num_users, 1)
-        self.item_bias = nn.Embedding(num_items, 1)
+class AutoRec(nn.Module):
+    def __init__(self, num_hidden, num_users, dropout=0.05):
+        super(AutoRec, self).__init__()
+        self.encoder = nn.Linear(num_users, num_hidden)  # Assuming the input dimension is num_users
+        self.decoder = nn.Linear(num_hidden, num_users)
+        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, user_id, item_id):
-        P_u = self.P(user_id)
-        Q_i = self.Q(item_id)
-        b_u = self.user_bias(user_id)
-        b_i = self.item_bias(item_id)
-        outputs = (P_u * Q_i).sum(1) + b_u.squeeze() + b_i.squeeze()
-        return outputs
+    def forward(self, input):
+        input = input.float()  # Ensure input is float for processing
+        hidden = F.sigmoid(self.encoder(self.dropout(input)))  # Apply dropout before encoding
+        pred = self.decoder(hidden)
+        if self.training:  # Check if the model is in training mode
+            return pred * torch.sign(input)
+        else:
+            return pred
+        
+def evaluator(network, inter_matrix, test_data, device):
+    network.eval()  # Ensure the network is in evaluation mode
+    scores = []
+    
+    # Assuming inter_matrix is a list of tensors
+    for values in inter_matrix:
+        values = values.to(device)  # Move the data to the specified device
+        scores.append(network(values).detach().cpu().numpy())  # Compute and collect scores
+    
+    # Flatten the list of scores and convert it to a numpy array
+    recons = np.concatenate(scores, axis=0)
+    
+    # Calculate the test RMSE
+    test_data = test_data.numpy() if isinstance(test_data, torch.Tensor) else test_data
+    signed_test_data = np.sign(test_data) * recons
+    mse = np.mean((test_data - signed_test_data) ** 2)
+    rmse = np.sqrt(mse)
+    
+    return float(rmse)
 
-def evaluator(net, test_iter, device):
-    net.eval()  # Set the network to evaluation mode
-    rmse_accumulator = 0
-    total_count = 0
-    
-    with torch.no_grad():  # No gradients needed for evaluation
-        for users, items, ratings in test_iter:
-            users, items, ratings = users.to(device), items.to(device), ratings.to(device)
-            predictions = net(users, items)
-            loss = torch.sqrt(mse_loss(predictions, ratings))
-            rmse_accumulator += loss.item() * len(users)  # Weighted sum of the RMSE
-            total_count += len(users)  # Total number of samples processed
-    
-    average_rmse = rmse_accumulator / total_count  # Calculate the average RMSE
-    return average_rmse
-    
 
 def train_recsys_rating(net, train_iter, test_iter, loss_fn, optimizer, num_epochs, device):
     net.to(device)
@@ -155,19 +149,39 @@ def train_recsys_rating(net, train_iter, test_iter, loss_fn, optimizer, num_epoc
         print(f'Epoch {epoch + 1}, Train Loss: {train_loss:.3f}, Test RMSE: {test_rmse:.3f}')
     print(f'Finished training on {device}')
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-num_users, num_items, train_iter, test_iter = split_and_load_ml100k()
-net = MF(30, num_users, num_items)
-net.to(device)
-net.apply(lambda x: nn.init.normal_(x.weight, mean=0, std=0.01) if type(x) == nn.Embedding else None)
 
-# Training Setup
-lr, num_epochs, wd = 0.002, 20, 1e-5
-optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=wd)
+# Load the MovieLens 100K dataset
+df, num_users, num_items = read_data_ml100k()
+num_users, num_items, train_iter, test_iter = split_and_load_ml100k()
+# train_inter_mat = torch.tensor(load_data_ml100k(train_data, num_users, num_items)[3], dtype=torch.float32)
+# test_inter_mat = torch.tensor(load_data_ml100k(test_data, num_users, num_items)[3], dtype=torch.float32)
+
+# # DataLoaders
+# train_iter = DataLoader(train_inter_mat, batch_size=256, shuffle=True, num_workers=4)
+# test_iter = DataLoader(test_inter_mat, batch_size=1024, shuffle=False, num_workers=4)
+
+# Model initialization
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+net = AutoRec(500, num_users).to(device)
+net.apply(lambda m: nn.init.normal_(m.weight, mean=0, std=0.01) if hasattr(m, 'weight') else None)
+
+# Optimizer and Loss
+lr, num_epochs, wd, optimizer = 0.002, 25, 1e-5, 'adam'
+optimizer = optim.Adam(net.parameters(), lr=0.002, weight_decay=1e-5)
 loss_fn = nn.MSELoss()
+
 # Run Training
+
 train_recsys_rating(net, train_iter, test_iter, loss_fn, optimizer, num_epochs, device)
 
+user_ids = torch.tensor([20], dtype=torch.long).to(device)  # torch.long is equivalent to 'int' in MXNet
+item_ids = torch.tensor([30], dtype=torch.long).to(device)
+
+# Get scores by passing the tensors to the model
+scores = net(user_ids, item_ids)
+print(scores)
+
+# Load the MovieLens 100K dataset
 user_ids = torch.tensor([20], dtype=torch.long).to(device)  # torch.long is equivalent to 'int' in MXNet
 item_ids = torch.tensor([30], dtype=torch.long).to(device)
 
