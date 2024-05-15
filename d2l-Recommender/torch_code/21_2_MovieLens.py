@@ -4,7 +4,7 @@ import numpy as np
 
 from d2l import torch as d2l
 from torch.utils.data import DataLoader, TensorDataset
-import torch
+import torch_code
 
 d2l.DATA_HUB['ml-100k'] = (
     'https://files.grouplens.org/datasets/movielens/ml-100k.zip',
@@ -80,8 +80,8 @@ def split_and_load_ml100k(split_mode='seq-aware', feedback='explicit',
         test_data, num_users, num_items, feedback)
     
     # Convert lists to PyTorch tensors
-    train_u, train_i, train_r = map(torch.tensor, (train_u, train_i, train_r))
-    test_u, test_i, test_r = map(torch.tensor, (test_u, test_i, test_r))
+    train_u, train_i, train_r = map(torch_code.tensor, (train_u, train_i, train_r))
+    test_u, test_i, test_r = map(torch_code.tensor, (test_u, test_i, test_r))
 
     # Create TensorDataset objects
     train_set = TensorDataset(train_u, train_i, train_r)

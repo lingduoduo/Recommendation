@@ -130,15 +130,11 @@ def train_recsys_rating(net, train_iter, test_iter, loss_fn, optimizer, num_epoc
     for epoch in range(num_epochs):
         net.train()  # Set the network to training mode
         metric = d2l.Accumulator(3)  # Sum of training loss, number of examples, total time
-        for i, (users, items, ratings) in enumerate(train_iter):
-            users, items, ratings = users.to(device), items.to(device), ratings.to(device)
-            users = users.to(device)
-            items = items.to(device)
-            ratings = ratings.to(device).float()
+        for i, data in enumerate(train_iter):
             optimizer.zero_grad()
-            predictions = net(users, items)
+            predictions = net(data)
             predictions = predictions.float()
-            loss = loss_fn(predictions, ratings)
+            loss = loss_fn(predictions, data)
             loss.backward()
             optimizer.step()
             with torch.no_grad():
