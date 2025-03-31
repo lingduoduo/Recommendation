@@ -193,7 +193,7 @@ def personal_rank_mat(graph, root, alpha, recom_num=10):
 
     # Build transition matrix and solve A * r = r0 using GMRES
     mat_all = mat_all_point(m, vertex, alpha)
-    r, _ = gmres(mat_all, r0.flatten(), tol=1e-8)
+    r, _ = gmres(mat_all, r0.flatten(), rtol=1e-8)
 
     # Convert results to pandas Series
     rank_series = pd.Series(r, index=vertex)
@@ -235,7 +235,7 @@ def get_one_user_by_mat():
     """
     give one fix user by mat
     """
-    user = "1"
+    user = "A"
     alpha = 0.8
     graph = get_graph_from_data("../data/log.txt")
     recom_result = personal_rank_mat(graph, user, alpha, 100)
@@ -247,10 +247,14 @@ if __name__ == "__main__":
     # graph = get_graph_from_data("../data/ratings.txt")
     # print(graph[1])
 
-    # recom_result_base = get_one_user_recom()
     # graph = get_graph_from_data("../data/log.txt")
     # m, vertex, address_dict = graph_to_m(graph)
     # print(mat_all_point(m, vertex, 0.8))
+    # print(address_dict)
 
-    # recom_result_mat = get_one_user_by_mat()
+    # recom_result_base= get_one_user_recom()
+    # print(recom_result_base)
+
+    recom_result_mat = get_one_user_by_mat()
+    print(recom_result_mat)
 
