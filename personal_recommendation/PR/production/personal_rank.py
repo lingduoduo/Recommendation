@@ -27,7 +27,7 @@ def get_graph_from_data(input_file):
 
     # Filter and clean
     df = df[df.iloc[:, 2].astype(float) >= score_thr]
-    df.columns = ['user', 'item', 'rating', 'timestamp']
+    df.columns = ['user', 'item', 'rating'] if len(df.columns) == 3 else ['user', 'item', 'rating', 'timestamp']
     df['item'] = df['item'].astype(str).apply(lambda x: f'item_{x}')
 
     # Use apply to populate the graph
@@ -63,40 +63,6 @@ def get_item_info(input_file):
     ).to_dict()
 
     return item_info
-
-
-def graph_to_m(graph):
-    """
-    Convert a user-item graph into a sparse matrix (COO format).
-
-    Args:
-        graph: dict, user-item graph
-
-    Returns:
-        m: scipy.sparse.coo_matrix, normalized transition matrix
-        vertex: list of node names
-        address_dict: dict mapping node name to row/column index
-    """
-    # Use pandas Index for fast mapping and alignment
-    vertex = pd.Index(graph.keys())
-    address_dict = vertex.to_series().to_dict()
-
-    rows = []
-    cols = []
-    data = []
-
-    for src_node, neighbors in graph.items():
-        src_idx = address_dict[src_node]
-        weight = round(1 / len(neighbors), 3) if neighbors else 0.0
-        for dst_node in neighbors:
-            dst_idx = address_dict[dst_node]
-            rows.append(src_idx)
-            cols.append(dst_idx)
-            data.append(weight)
-
-    m = coo_matrix((data, (rows, cols)), shape=(len(vertex), len(vertex)))
-    return m, vertex.tolist(), address_dict
-
 
 def personal_rank(graph, root, alpha, iter_num, recom_num=10):
     """
@@ -146,6 +112,40 @@ def personal_rank(graph, root, alpha, iter_num, recom_num=10):
 
     return recom_result
 
+def graph_to_m(graph):
+    """
+    Convert a user-item graph into a sparse matrix (COO format).
+
+    Args:
+        graph: dict, user-item graph
+
+    Returns:
+        m: scipy.sparse.coo_matrix, normalized transition matrix
+        vertex: list of node names
+        address_dict: dict mapping node name to row/column index
+    """
+    # All unique nodes from keys and values
+    all_nodes = set(graph.keys())
+    for neighbors in graph.values():
+        all_nodes.update(neighbors)
+
+    vertex = pd.Index(sorted(all_nodes))  # consistent order
+    address_dict = {node: idx for idx, node in enumerate(vertex)}
+
+    rows, cols, data = [], [], []
+    for src_node, neighbors in graph.items():
+        if not neighbors:
+            continue
+        src_idx = address_dict[src_node]
+        weight = round(1 / len(neighbors), 3)
+        for dst_node in neighbors:
+            dst_idx = address_dict[dst_node]
+            rows.append(src_idx)
+            cols.append(dst_idx)
+            data.append(weight)
+
+    m = coo_matrix((data, (rows, cols)), shape=(len(vertex), len(vertex)))
+    return m, vertex.tolist(), address_dict
 
 def mat_all_point(m_mat, vertex, alpha):
     """
@@ -214,23 +214,21 @@ def get_one_user_recom():
     """
     give one fix_user recom result
     """
-    user = "1"
+    user = "A"
     alpha = 0.8
-    graph = get_graph_from_data("../data/ratings.txt")
+    graph = get_graph_from_data("../data/log.txt")
     iter_num = 100
     recom_result = personal_rank(graph, user, alpha, iter_num, 100)
     return  recom_result
-    """
-    item_info = read.get_item_info("../data/movies.txt")
-    for itemid in graph[user]:
-        pure_itemid = itemid.split("_")[1]
-        print item_info[pure_itemid]
-    print "result---"
-    for itemid in recom_result:
-        pure_itemid = itemid.split("_")[1]
-        print item_info[pure_itemid]
-        print recom_result[itemid]
-    """
+    # item_info = read.get_item_info("../data/movies.txt")
+    # for itemid in graph[user]:
+    #     pure_itemid = itemid.split("_")[1]
+    #     print item_info[pure_itemid]
+    # print "result---"
+    # for itemid in recom_result:
+    #     pure_itemid = itemid.split("_")[1]
+    #     print item_info[pure_itemid]
+    #     print recom_result[itemid]
 
 
 def get_one_user_by_mat():
@@ -239,7 +237,7 @@ def get_one_user_by_mat():
     """
     user = "1"
     alpha = 0.8
-    graph = get_graph_from_data("../data/ratings.txt")
+    graph = get_graph_from_data("../data/log.txt")
     recom_result = personal_rank_mat(graph, user, alpha, 100)
     return recom_result
 
@@ -248,6 +246,11 @@ if __name__ == "__main__":
     # print(get_graph_from_data("../data/log.txt"))
     # graph = get_graph_from_data("../data/ratings.txt")
     # print(graph[1])
+
     # recom_result_base = get_one_user_recom()
+    # graph = get_graph_from_data("../data/log.txt")
+    # m, vertex, address_dict = graph_to_m(graph)
+    # print(mat_all_point(m, vertex, 0.8))
+
     # recom_result_mat = get_one_user_by_mat()
 
