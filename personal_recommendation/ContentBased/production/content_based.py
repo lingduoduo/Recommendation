@@ -34,61 +34,53 @@ def get_ave_score(input_file):
     # Convert to dict
     return ave_scores.to_dict()
 
-
 def get_item_cate(ave_score, input_file, topk=100):
     """
     Args:
-        ave_score (dict): {itemid: rating score}
-        input_file (str): item info file with columns [itemid,...,cate_str]
+        ave_score (dict): {itemid: avg_rating}
+        input_file (str): item info file (columns: itemid,...,categories pipe-separated)
+        topk (int): number of top items per category to return
 
     Returns:
         item_cate (dict): {itemid: {cate: ratio}}
         cate_item_sort (dict): {cate: [itemid1, itemid2, ...]}
     """
-    if not os.path.exists(input_file):
-        return {}, {}
-
     # Load item info file, skip header
     df = pd.read_csv(input_file, skiprows=1, header=None)
 
-    # Assume itemid is column 0, and categories are in the last column
+    # Assume first column is itemid, last is pipe-separated category string
     df = df[[0, df.columns[-1]]]
     df.columns = ["itemid", "cate_str"]
-    df.dropna(subset=["itemid", "cate_str"], inplace=True)
-    df["itemid"] = df["itemid"].astype(str)
 
-    # Split cate_str into list and compute ratio per item
+    # Drop missing and ensure string
+    df = df.dropna(subset=["itemid", "cate_str"])
+    df["itemid"] = df["itemid"].astype(str)
     df["cate_list"] = df["cate_str"].apply(lambda x: x.strip().split("|"))
+
+    # Build item_cate dict
     df["cate_ratio_dict"] = df["cate_list"].apply(
         lambda cates: {cate: round(1 / len(cates), 3) for cate in cates}
     )
-
-    # -------- item_cate: {itemid: {cate: ratio}} --------
     item_cate = pd.Series(df["cate_ratio_dict"].values, index=df["itemid"]).to_dict()
 
-    # -------- record: {cate: {itemid: score}} --------
-    # Explode for category-level mapping
+    # Explode for category-level processing
     df_exploded = df[["itemid", "cate_list"]].explode("cate_list")
     df_exploded.columns = ["itemid", "cate"]
-    df_exploded["score"] = df_exploded["itemid"].apply(lambda x: ave_score.get(x, 0))
 
-    # Pivot into nested dict: {cate: {itemid: score}}
-    record = (
-        df_exploded.groupby("cate")[["itemid", "score"]]
-        .apply(lambda x: dict(zip(x["itemid"], x["score"])))
-        .to_dict()
-    )
+    # Add average score from ave_score dict
+    df_exploded["score"] = df_exploded["itemid"].map(ave_score).fillna(0.0)
 
-    # -------- cate_item_sort: {cate: [itemid1, itemid2, ...]} --------
-    cate_item_sort = {
-        cate: [
-            itemid for itemid, _ in sorted(items.items(), key=lambda x: x[1], reverse=True)[:topk]
-        ]
-        for cate, items in record.items()
-    }
+    # Properly sort and group
+    df_exploded = df_exploded.sort_values(by=["cate", "score"], ascending=[True, False])
+    df_exploded["rank"] = df_exploded.groupby("cate").cumcount()
+
+    # Keep only topk
+    df_topk = df_exploded[df_exploded["rank"] < topk]
+
+    # Build cate_item_sort dict
+    cate_item_sort = df_topk.groupby("cate")["itemid"].apply(list).to_dict()
 
     return item_cate, cate_item_sort
-
 
 def get_latest_timestamp(input_file):
     """
@@ -109,52 +101,65 @@ def get_latest_timestamp(input_file):
     latest = df["timestamp"].max()
     print(latest)
 
+def topk_normalized(group, topk=2):
+    """
+    Rank and normalize top-k categories for a user.
+    Args:
+        group (DataFrame): Rows corresponding to a single user's category scores.
+        topk (int): Number of top categories to return.
+    Returns:
+        list of tuples: [(category, normalized_score), ...]
+    """
+    top = group.sort_values("weighted_score", ascending=False).head(topk)
+    total = top["weighted_score"].sum()
+    if total == 0:
+        return list(zip(top["cate"], [0] * len(top)))
+    return list(zip(top["cate"], (top["weighted_score"] / total).round(3)))
+
 
 def get_up(item_cate, input_file, score_thr=4.0, topk=2):
     """
+    Compute user preferences from ratings and item-category mappings.
+
     Args:
         item_cate (dict): {itemid: {cate: ratio}}
-        input_file (str): user rating file
+        input_file (str): Path to user rating CSV file.
+        score_thr (float): Minimum score to consider a rating.
+        topk (int): Number of top categories to return per user.
+
     Returns:
         dict: {userid: [(cate1, ratio1), (cate2, ratio2), ...]}
     """
-    if not os.path.exists(input_file):
-        return {}
-
-    # Load rating file
+    # Load and filter ratings
     df = pd.read_csv(input_file, skiprows=1, header=None, names=["userid", "itemid", "rating", "timestamp"])
-
-    # Filter: valid ratings and known items
+    df["itemid"] = df["itemid"].astype(str)
+    df["userid"] = df["userid"].astype(str)
     df = df[df["rating"] >= score_thr]
-    df = df[df["itemid"].isin(item_cate)]
 
-    # Add time_score column using your get_time_score() function
+    df = df[df["itemid"].isin(item_cate)]
+    # Apply time score
     df["time_score"] = df["timestamp"].apply(get_time_score)
 
-    # Expand each itemid → category mapping into multiple rows
-    df["cate_ratios"] = df["itemid"].map(item_cate)
-    df = df.explode("cate_ratios")  # This gives key-value dict per row
+    # Expand item-cate mapping into rows
+    expanded_rows = []
+    for _, row in df.iterrows():
+        itemid = row["itemid"]
+        userid = row["userid"]
+        rating = row["rating"]
+        time_score = row["time_score"]
+        for cate, ratio in item_cate[itemid].items():
+            weighted = rating * time_score * ratio
+            expanded_rows.append((userid, cate, weighted))
 
-    # Flatten nested cate:ratio dicts into two columns
-    df = df[df["cate_ratios"].notnull()]
-    df["cate"] = df["cate_ratios"].apply(lambda x: list(x.keys())[0])
-    df["ratio"] = df["cate_ratios"].apply(lambda x: list(x.values())[0])
+    expanded_df = pd.DataFrame(expanded_rows, columns=["userid", "cate", "weighted_score"])
 
-    # Compute weighted score: rating * time_score * ratio
-    df["weighted_score"] = df["rating"] * df["time_score"] * df["ratio"]
+    # Aggregate by user-category
+    agg_df = expanded_df.groupby(["userid", "cate"])["weighted_score"].sum().reset_index()
 
-    # Aggregate: sum scores by user and category
-    agg_df = df.groupby(["userid", "cate"])["weighted_score"].sum().reset_index()
-
-    # Rank and normalize top-k categories per user
-    def topk_normalized(group):
-        top = group.sort_values("weighted_score", ascending=False).head(topk)
-        total = top["weighted_score"].sum()
-        return list(zip(top["cate"], (top["weighted_score"] / total).round(3)))
-
-    up = agg_df.groupby("userid").apply(topk_normalized).to_dict()
-
-    return up
+    return {
+        userid: topk_normalized(group.drop(columns="userid"))
+        for userid, group in agg_df.groupby("userid")
+    }
 
 
 def get_time_score(timestamp):
@@ -181,12 +186,8 @@ def recom(cate_item_sort, up, userid, topk=10):
     Returns:
         dict: {userid: [itemid1, itemid2, ...]}
     """
-    if userid not in up:
-        return {}
-
     # Build a DataFrame from user's category interests
     df = pd.DataFrame(up[userid], columns=["cate", "ratio"])
-
     # Calculate number of items to recommend from each category
     df["num"] = df["ratio"].apply(lambda r: int(topk * r) + 1)
 
@@ -197,20 +198,23 @@ def recom(cate_item_sort, up, userid, topk=10):
     df["items"] = df.apply(lambda row: cate_item_sort[row["cate"]][:row["num"]], axis=1)
 
     # Flatten and deduplicate the final recommendation list
-    all_items = df["items"]._
+    all_items = df["items"].explode().drop_duplicates().tolist()
+
+    return {userid: all_items[:topk]}  # limit final list to topk items
 
 
 def run_main():
     ave_score = get_ave_score("../data/ratings.txt")
     item_cate, cate_item_sort = get_item_cate(ave_score, "../data/movies.txt")
     up = get_up(item_cate, "../data/ratings.txt")
-    recom(cate_item_sort, up, "1")
+    # print(up)
+    return recom(cate_item_sort, up, "1")
 
 if __name__ == "__main__":
-    avg = get_ave_score("../data/ratings.txt")
-    print(avg[31])
-
-    item_cate, cate_item_sort = get_item_cate(avg, "../data/movies.txt")
-    print(item_cate["1"])
-    print(cate_item_sort["Children"])
-    # run_main()
+    # avg = get_ave_score("../data/ratings.txt")
+    # print(avg[31])
+    #
+    # item_cate, cate_item_sort = get_item_cate(avg, "../data/movies.txt")
+    # print(item_cate["1"])
+    # print(cate_item_sort["Children"])
+    print(run_main())
