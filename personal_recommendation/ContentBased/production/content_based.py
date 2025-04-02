@@ -10,75 +10,70 @@ import pandas as pd
 def get_ave_score(input_file):
     """
     Args:
-        input_file: user rating CSV file (columns: userid, itemid, rating, timestamp)
-
-    Returns:
-        dict: {itemid: average_rating}
+        input_file: user rating file
+    Return:
+        dict: key = itemid, value = average score (rounded to 3 decimals)
     """
-    if not os.path.exists(input_file):
-        return {}
+    # Load CSV with headers skipped manually (first row is header)
+    df = pd.read_csv(input_file, skiprows=1, header=None, names=['userid', 'itemid', 'rating', 'timestamp'])
 
-    # Load file, skip first line (header), assume comma-separated
-    df = pd.read_csv(input_file, skiprows=1, header=None, names=["userid", "itemid", "rating", "timestamp"])
+    # Ensure rating column is float and itemid is str (optional safety)
+    df['rating'] = df['rating'].astype(float)
+    df['itemid'] = df['itemid'].astype(str)
 
-    # Drop rows with missing data
-    df = df.dropna(subset=["itemid", "rating"])
+    # Group by itemid and calculate the mean rating
+    ave_score_series = df.groupby('itemid')['rating'].mean().round(3)
 
-    # Ensure proper types
-    df["rating"] = pd.to_numeric(df["rating"], errors="coerce")
-    df = df.dropna(subset=["rating"])
-
-    # Group by itemid and calculate average rating
-    ave_scores = df.groupby("itemid")["rating"].mean().round(3)
-
-    # Convert to dict
-    return ave_scores.to_dict()
+    # Convert Series to dict
+    return ave_score_series.to_dict()
 
 def get_item_cate(ave_score, input_file, topk=100):
     """
     Args:
-        ave_score (dict): {itemid: avg_rating}
-        input_file (str): item info file (columns: itemid,...,categories pipe-separated)
-        topk (int): number of top items per category to return
-
-    Returns:
-        item_cate (dict): {itemid: {cate: ratio}}
-        cate_item_sort (dict): {cate: [itemid1, itemid2, ...]}
+        ave_score: dict, key = itemid, value = average rating score
+        input_file: item info file (with categories)
+    Return:
+        item_cate: dict, key = itemid, value = {category: ratio}
+        cate_item_sort: dict, key = category, value = top itemids list
     """
-    # Load item info file, skip header
-    df = pd.read_csv(input_file, skiprows=1, header=None)
+    if not os.path.exists(input_file):
+        return {}, {}
 
-    # Assume first column is itemid, last is pipe-separated category string
-    df = df[[0, df.columns[-1]]]
-    df.columns = ["itemid", "cate_str"]
+    # Read file skipping header
+    df = pd.read_csv(input_file, skiprows=1, header=None, names=['itemid', 'name', 'categories'])
 
-    # Drop missing and ensure string
-    df = df.dropna(subset=["itemid", "cate_str"])
-    df["itemid"] = df["itemid"].astype(str)
-    df["cate_list"] = df["cate_str"].apply(lambda x: x.strip().split("|"))
+    # Drop rows with missing values in categories
+    df = df.dropna(subset=['categories'])
 
-    # Build item_cate dict
-    df["cate_ratio_dict"] = df["cate_list"].apply(
-        lambda cates: {cate: round(1 / len(cates), 3) for cate in cates}
-    )
-    item_cate = pd.Series(df["cate_ratio_dict"].values, index=df["itemid"]).to_dict()
+    # Split categories into lists
+    df['cate_list'] = df['categories'].apply(lambda x: x.split('|'))
 
-    # Explode for category-level processing
-    df_exploded = df[["itemid", "cate_list"]].explode("cate_list")
-    df_exploded.columns = ["itemid", "cate"]
+    # Calculate equal ratio for each category per item
+    df['cate_ratio'] = df['cate_list'].apply(lambda x: round(1 / len(x), 3) if len(x) > 0 else 0)
 
-    # Add average score from ave_score dict
-    df_exploded["score"] = df_exploded["itemid"].map(ave_score).fillna(0.0)
+    # Build item_cate: itemid -> {cate: ratio}
+    item_cate = {}
+    for _, row in df.iterrows():
+        itemid = str(row['itemid'])
+        ratio = row['cate_ratio']
+        item_cate[itemid] = {cate: ratio for cate in row['cate_list']}
 
-    # Properly sort and group
-    df_exploded = df_exploded.sort_values(by=["cate", "score"], ascending=[True, False])
-    df_exploded["rank"] = df_exploded.groupby("cate").cumcount()
+    # Build category -> {itemid: score}
+    df['itemid'] = df['itemid'].astype(str)
+    df['score'] = df['itemid'].apply(lambda x: ave_score.get(x, 0))
+    cate_item_map = {}
 
-    # Keep only topk
-    df_topk = df_exploded[df_exploded["rank"] < topk]
+    for _, row in df.iterrows():
+        for cate in row['cate_list']:
+            if cate not in cate_item_map:
+                cate_item_map[cate] = []
+            cate_item_map[cate].append((row['itemid'], row['score']))
 
-    # Build cate_item_sort dict
-    cate_item_sort = df_topk.groupby("cate")["itemid"].apply(list).to_dict()
+    # For each category, sort items by score and keep topk
+    cate_item_sort = {
+        cate: [itemid for itemid, _ in sorted(items, key=lambda x: x[1], reverse=True)[:topk]]
+        for cate, items in cate_item_map.items()
+    }
 
     return item_cate, cate_item_sort
 
@@ -135,7 +130,6 @@ def get_up(item_cate, input_file, score_thr=4.0, topk=2):
     df["itemid"] = df["itemid"].astype(str)
     df["userid"] = df["userid"].astype(str)
     df = df[df["rating"] >= score_thr]
-
     df = df[df["itemid"].isin(item_cate)]
     # Apply time score
     df["time_score"] = df["timestamp"].apply(get_time_score)
@@ -207,7 +201,8 @@ def run_main():
     ave_score = get_ave_score("../data/ratings.txt")
     item_cate, cate_item_sort = get_item_cate(ave_score, "../data/movies.txt")
     up = get_up(item_cate, "../data/ratings.txt")
-    # print(up)
+    print(len(up))
+    print(up["1"])
     return recom(cate_item_sort, up, "1")
 
 if __name__ == "__main__":
