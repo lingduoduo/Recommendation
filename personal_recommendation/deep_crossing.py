@@ -4,39 +4,39 @@
 @Author  : ling.huang@adp.com
 @File    : Deep-Crossing.py
 """
-
 import numpy as np
 import pandas as pd
 import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
-from sklearn.metrics import precision_score, recall_score, accuracy_score
+from sklearn.metrics import precision_score,recall_score,accuracy_score
 import torch.optim as optim
 
-# Load data
 data = pd.read_csv("../data/search_click.csv")
-item_df = pd.read_csv("../data/item_desc.csv")
-
-# Map user and item IDs to integer indices
 user_ids = data["user_id"].unique()
-user2idx = {user_id: idx for idx, user_id in enumerate(user_ids)}
+user_2_idx = {user_id: idx for idx, user_id in enumerate(user_ids)}
+
+item_df = pd.read_csv("../data/item_desc.csv")
 item_ids = item_df["item_id"].unique()
-item2idx = {item_id: idx for idx, item_id in enumerate(item_ids)}
+item_2_idx = {item_id: idx for idx, item_id in enumerate(item_ids)}
 
-# Map IDs in the main data
-data["user_idx"] = data["user_id"].map(user2idx)
-data["item_idx"] = data["item_id"].map(item2idx)
+data['user_idx'] = data['user_id'].map(user_2_idx)
+data['item_idx'] = data['item_id'].map(item_2_idx)
+data['rating'] = (data['rating'] - data['rating'].min()) / (data['rating'].max() - data['rating'].min())
 
-# Split data into training and testing sets
+
+global_avg = data["rating"].mean()
+
+# create training and test datasets
 np.random.seed(0)
-shuffled_indices = np.random.permutation(len(data))
-train_size = int(0.9 * len(data))
-train_indices = shuffled_indices[:train_size]
-test_indices = shuffled_indices[train_size:]
-
-train_data = data.iloc[train_indices]
-test_data = data.iloc[test_indices]
+shuffled_index = np.random.permutation(len(data))
+train_size = int(len(data) * 0.9)
+train_index = shuffled_index[:train_size]
+test_index = shuffled_index[train_size:]
+train_data = data.iloc[train_index]
+test_data = data.iloc[test_index]
+print(len(train_data), len(test_data))
 
 # Define custom Dataset
 class InteractionDataset(Dataset):
@@ -50,6 +50,7 @@ class InteractionDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.users[idx], self.items[idx], self.labels[idx]
+
 
 # Define the model
 class RecommenderModel(nn.Module):
@@ -69,8 +70,8 @@ class RecommenderModel(nn.Module):
         return x.squeeze()
 
 # Initialize model, loss function, and optimizer
-num_users = len(user2idx)
-num_items = len(item2idx)
+num_users = len(user_2_idx)
+num_items = len(item_2_idx)
 embedding_dim = 32
 
 model = RecommenderModel(num_users, num_items, embedding_dim)
@@ -93,9 +94,10 @@ def evaluate(model, data_loader):
             preds = model(user_batch, item_batch)
             all_preds.extend(preds.numpy())
             all_labels.extend(label_batch.numpy())
-    preds_binary = [1 if p >= 0.5 else 0 for p in all_preds]
-    precision = precision_score(all_labels, preds_binary)
-    recall = recall_score(all_labels, preds_binary)
+    preds_binary = [1 if p >= global_avg else 0 for p in all_preds]
+    all_labels = [int(label) for label in all_labels]
+    precision = precision_score(all_labels, preds_binary, zero_division=0)
+    recall = recall_score(all_labels, preds_binary, zero_division=0)
     accuracy = accuracy_score(all_labels, preds_binary)
     return precision, recall, accuracy
 
