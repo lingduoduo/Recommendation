@@ -4,6 +4,7 @@
 @Author  : ling.huang@adp.com
 @File    : Deep-Crossing.py
 """
+import os
 import numpy as np
 import pandas as pd
 import torch
@@ -13,30 +14,54 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.metrics import precision_score,recall_score,accuracy_score
 import torch.optim as optim
 
-data = pd.read_csv("../data/search_click.csv")
-user_ids = data["user_id"].unique()
-user_2_idx = {user_id: idx for idx, user_id in enumerate(user_ids)}
+local_path = "../data"
 
-item_df = pd.read_csv("../data/item_desc.csv")
-item_ids = item_df["item_id"].unique()
-item_2_idx = {item_id: idx for idx, item_id in enumerate(item_ids)}
+local_click_file = "search_click.csv"
+local_click_path_file = os.path.join(local_path, local_click_file)
 
-data['user_idx'] = data['user_id'].map(user_2_idx)
-data['item_idx'] = data['item_id'].map(item_2_idx)
-data['rating'] = (data['rating'] - data['rating'].min()) / (data['rating'].max() - data['rating'].min())
+local_item_file = "item_desc.csv"
+local_item_path_file = os.path.join(local_path, local_item_file)
 
+def produce_train_data(input_rating_path_file, input_item_path_file):
+    """
+    Args:
+        input_rating_path_file: user behavior CSV file with columns: userid, item_id, rating, timestamp
+        input_item_path_file: path to write the output item vectors in Word2Vec text format
+    """
+    data = pd.read_csv(input_rating_path_file,
+                     skiprows=1,
+                     header=None,
+                     names=["user_id", "item_id", "rating"],
+                     dtype={"user_id": str, "item_id": str, "rating": float},
+                     )
+    user_ids = data["user_id"].unique()
+    user_2_idx = {user_id: idx for idx, user_id in enumerate(user_ids)}
 
-global_avg = data["rating"].mean()
+    item_df = pd.read_csv(input_item_path_file,
+                     skiprows=1,
+                     header=None,
+                     names=["item_id", "title"],
+                     dtype={"item_id": str, "title": str},
+                     )
+    item_ids = item_df["item_id"].unique()
+    item_2_idx = {item_id: idx for idx, item_id in enumerate(item_ids)}
 
-# create training and test datasets
-np.random.seed(0)
-shuffled_index = np.random.permutation(len(data))
-train_size = int(len(data) * 0.9)
-train_index = shuffled_index[:train_size]
-test_index = shuffled_index[train_size:]
-train_data = data.iloc[train_index]
-test_data = data.iloc[test_index]
-print(len(train_data), len(test_data))
+    data['user_idx'] = data['user_id'].map(user_2_idx)
+    data['item_idx'] = data['item_id'].map(item_2_idx)
+    data['rating'] = (data['rating'] - data['rating'].min()) / (data['rating'].max() - data['rating'].min())
+
+    global_avg = data["rating"].mean()
+
+    # create training and test datasets
+    np.random.seed(0)
+    shuffled_index = np.random.permutation(len(data))
+    train_size = int(len(data) * 0.9)
+    train_index = shuffled_index[:train_size]
+    test_index = shuffled_index[train_size:]
+    train_data = data.iloc[train_index]
+    test_data = data.iloc[test_index]
+    print(len(train_data), len(test_data))
+    return train_data, test_data, user_2_idx, item_2_idx, global_avg
 
 # Define custom Dataset
 class InteractionDataset(Dataset):
@@ -69,21 +94,6 @@ class RecommenderModel(nn.Module):
         x = torch.sigmoid(self.fc2(x))
         return x.squeeze()
 
-# Initialize model, loss function, and optimizer
-num_users = len(user_2_idx)
-num_items = len(item_2_idx)
-embedding_dim = 32
-
-model = RecommenderModel(num_users, num_items, embedding_dim)
-loss_fn = nn.BCELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.01)
-
-# Prepare DataLoaders
-train_dataset = InteractionDataset(train_data)
-test_dataset = InteractionDataset(test_data)
-train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=512)
-
 # Evaluation function
 def evaluate(model, data_loader):
     model.eval()
@@ -100,6 +110,23 @@ def evaluate(model, data_loader):
     recall = recall_score(all_labels, preds_binary, zero_division=0)
     accuracy = accuracy_score(all_labels, preds_binary)
     return precision, recall, accuracy
+
+
+# Initialize model, loss function, and optimizer
+train_data, test_data, user_2_idx, item_2_idx, global_avg = produce_train_data(local_click_path_file, local_item_path_file)
+num_users = len(user_2_idx)
+num_items = len(item_2_idx)
+embedding_dim = 32
+
+model = RecommenderModel(num_users, num_items, embedding_dim)
+loss_fn = nn.BCELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.01)
+
+# Prepare DataLoaders
+train_dataset = InteractionDataset(train_data)
+test_dataset = InteractionDataset(test_data)
+train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=512)
 
 # Training loop
 num_epochs = 10
