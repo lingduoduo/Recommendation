@@ -1,29 +1,37 @@
-#-*-coding:utf8-*-
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-date:2018****
-personal rank main algo
+@Author  : ling.huang@adp.com
+@File    : PR.py
 """
-
-import operator
+import os
 import numpy as np
 import pandas as pd
 from scipy.sparse.linalg import gmres
 from scipy.sparse import coo_matrix, eye
-import os
 from collections import defaultdict
+from pathlib import Path
 
-def get_graph_from_data(input_file):
+# Get the project root directory using pathlib
+ROOT_DIR = Path.cwd().parent.parent
+local_path = ROOT_DIR / "src" / "data" / "input"
+
+local_click_file = "search_click.csv"
+local_click_path_file = local_path / local_click_file
+
+local_item_file = "item_desc.csv"
+local_item_path_file = local_path / local_item_file
+score_thr = 1
+
+
+def get_graph_from_data(input_path_file):
     """
     Args:
-        input_file: user-item-rating CSV file
-    Return:
+        input_path_file (str): Path and File name of the input file
+    Returns:
         A dict: {UserA: {itemB: 1, itemC: 1}, itemB: {UserA: 1}, ...}
     """
-    if not os.path.exists(input_file):
-        return {}
-
-    df = pd.read_csv(input_file)
-    score_thr = 4.0
+    df = pd.read_csv(input_path_file)
 
     # Filter and clean
     df = df[df.iloc[:, 2].astype(float) >= score_thr]
@@ -39,19 +47,16 @@ def get_graph_from_data(input_file):
     return dict(graph)
 
 
-def get_item_info(input_file):
+def get_item_info(input_path_file):
     """
-    Get item info: [title, genre]
+    Get item info: [title]
     Args:
-        input_file: item info file
-    Return:
-        A dict: key = itemid, value = [title, genre]
+        input_path_file (str): Path and file name of the input file
+    Returns:
+        A dict: key = itemid, value = [title]
     """
-    if not os.path.exists(input_file):
-        return {}
-
     # Read the file with no type inference
-    df = pd.read_csv(input_file, header=0, dtype=str, keep_default_na=False)
+    df = pd.read_csv(input_path_file, header=0, dtype=str, keep_default_na=False)
 
     # Use apply with a lambda to handle different lengths
     item_info = df.apply(
@@ -63,6 +68,7 @@ def get_item_info(input_file):
     ).to_dict()
 
     return item_info
+
 
 def personal_rank(graph, root, alpha, iter_num, recom_num=10):
     """
@@ -112,6 +118,7 @@ def personal_rank(graph, root, alpha, iter_num, recom_num=10):
 
     return recom_result
 
+
 def graph_to_m(graph):
     """
     Convert a user-item graph into a sparse matrix (COO format).
@@ -146,6 +153,7 @@ def graph_to_m(graph):
 
     m = coo_matrix((data, (rows, cols)), shape=(len(vertex), len(vertex)))
     return m, vertex.tolist(), address_dict
+
 
 def mat_all_point(m_mat, vertex, alpha):
     """
@@ -193,7 +201,7 @@ def personal_rank_mat(graph, root, alpha, recom_num=10):
 
     # Build transition matrix and solve A * r = r0 using GMRES
     mat_all = mat_all_point(m, vertex, alpha)
-    r, _ = gmres(mat_all, r0.flatten(), rtol=1e-8)
+    r, _ = gmres(mat_all, r0.flatten(), tol=1e-8)
 
     # Convert results to pandas Series
     rank_series = pd.Series(r, index=vertex)
@@ -214,47 +222,30 @@ def get_one_user_recom():
     """
     give one fix_user recom result
     """
-    user = "A"
+    user = "cf056cdb-c14b-4fe7-abb4-ea899db0e992"
+    print(f"user: {user}")
     alpha = 0.8
-    graph = get_graph_from_data("../data/log.txt")
+    graph = get_graph_from_data(local_click_path_file)
     iter_num = 100
-    recom_result = personal_rank(graph, user, alpha, iter_num, 100)
-    return  recom_result
-    # item_info = read.get_item_info("../data/movies.txt")
-    # for itemid in graph[user]:
-    #     pure_itemid = itemid.split("_")[1]
-    #     print item_info[pure_itemid]
-    # print "result---"
-    # for itemid in recom_result:
-    #     pure_itemid = itemid.split("_")[1]
-    #     print item_info[pure_itemid]
-    #     print recom_result[itemid]
+    recom_result = personal_rank(graph, user, alpha, iter_num, 10)
+    return recom_result
 
 
 def get_one_user_by_mat():
     """
     give one fix user by mat
     """
-    user = "A"
+    user = "cf056cdb-c14b-4fe7-abb4-ea899db0e992"
+    print(f"user: {user}")
     alpha = 0.8
-    graph = get_graph_from_data("../data/log.txt")
-    recom_result = personal_rank_mat(graph, user, alpha, 100)
+    graph = get_graph_from_data(local_click_path_file)
+    recom_result = personal_rank_mat(graph, user, alpha, 10)
     return recom_result
 
 
 if __name__ == "__main__":
-    # print(get_graph_from_data("../data/log.txt"))
-    # graph = get_graph_from_data("../data/ratings.txt")
-    # print(graph[1])
-
-    # graph = get_graph_from_data("../data/log.txt")
-    # m, vertex, address_dict = graph_to_m(graph)
-    # print(mat_all_point(m, vertex, 0.8))
-    # print(address_dict)
-
-    # recom_result_base= get_one_user_recom()
-    # print(recom_result_base)
-
+    recom_result_base = get_one_user_recom()
+    print(recom_result_base)
+    print("-------------------------")
     recom_result_mat = get_one_user_by_mat()
     print(recom_result_mat)
-
