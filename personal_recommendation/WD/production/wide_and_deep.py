@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 @Author  : ling.huang@adp.com
-@File    : DeepWide.py (fixed)
+@File    : DeepWide.py (fixed, optimized indexing)
 """
 import os
 import numpy as np
@@ -114,8 +114,9 @@ class Deep_wide(nn.Module):
     def __init__(self, feature_num, user_df, item_df, hidden_dim=64):
         super(Deep_wide, self).__init__()
         self.features = nn.Embedding(feature_num, hidden_dim, max_norm=1)
-        self.user_df = user_df
-        self.item_df = item_df
+        # cache DataFrame lookups as tensors for fast indexing
+        self.user_features = torch.LongTensor(user_df.values)
+        self.item_features = torch.LongTensor(item_df.values)
         total_feature_num = user_df.shape[1] + item_df.shape[1]
         self.mlp_layer = self.__mlp(hidden_dim * total_feature_num)
         self.linear_layer = nn.Linear(hidden_dim * total_feature_num, 1)
@@ -136,8 +137,9 @@ class Deep_wide(nn.Module):
         return torch.squeeze(self.mlp_layer(feature_embs))
 
     def concat_user_item_vec(self, u, i):
-        users = torch.LongTensor(self.user_df.loc[u].values)
-        items = torch.LongTensor(self.item_df.loc[i].values)
+        # u, i: LongTensor of indices
+        users = self.user_features[u]     # [batch, user_feat]
+        items = self.item_features[i]     # [batch, item_feat]
         return torch.cat([users, items], dim=1)
 
     def forward(self, u, i):
