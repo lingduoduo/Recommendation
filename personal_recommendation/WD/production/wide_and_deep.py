@@ -277,3 +277,90 @@ def train_and_evaluate(local_click_path_file, local_item_path_file, local_user_p
 
 if __name__ == "__main__":
     train_and_evaluate(local_click_path_file, local_item_path_file, local_user_path_file)
+
+
+
+IndexError: select(): index 239 out of range for tensor of size [239, 64] at dimension 0
+---------------------------------------------------------------------------
+IndexError                                Traceback (most recent call last)
+File ~/.ipykernel/4229/command--1-679267947:8
+      5 del sys
+      7 with open(filename, "rb") as f:
+----> 8   exec(compile(f.read(), filename, 'exec'))
+
+File /Workspace/Users/67adb2b8-21b2-45da-add8-169ebaddb6af/.bundle/nas-lifion_ml-sdq/recommendation_workflow/dev/files/src/model/DeepWide.py:279
+    275         print('----------------------------------------------------------------------------------------')
+    278 if __name__ == "__main__":
+--> 279     train_and_evaluate(local_click_path_file, local_item_path_file, local_user_path_file)
+
+File /Workspace/Users/67adb2b8-21b2-45da-add8-169ebaddb6af/.bundle/nas-lifion_ml-sdq/recommendation_workflow/dev/files/src/model/DeepWide.py:257, in train_and_evaluate(local_click_path_file, local_item_path_file, local_user_path_file)
+    255 for user, item, rating in DataLoader(train_set, batch_size=512, shuffle=True):
+    256     optimizer.zero_grad()
+--> 257     predictions = model(user, item)
+    258     loss = loss_fn(predictions, rating.float())
+    259     loss.backward()
+
+File /databricks/python/lib/python3.11/site-packages/torch/nn/modules/module.py:1532, in Module._wrapped_call_impl(self, *args, **kwargs)
+   1530     return self._compiled_call_impl(*args, **kwargs)  # type: ignore[misc]
+   1531 else:
+-> 1532     return self._call_impl(*args, **kwargs)
+
+File /databricks/python/lib/python3.11/site-packages/torch/nn/modules/module.py:1541, in Module._call_impl(self, *args, **kwargs)
+   1536 # If we don't have any hooks, we want to skip the rest of the logic in
+   1537 # this function, and just call forward.
+   1538 if not (self._backward_hooks or self._backward_pre_hooks or self._forward_hooks or self._forward_pre_hooks
+   1539         or _global_backward_pre_hooks or _global_backward_hooks
+   1540         or _global_forward_hooks or _global_forward_pre_hooks):
+-> 1541     return forward_call(*args, **kwargs)
+   1543 try:
+   1544     result = None
+
+File /Workspace/Users/67adb2b8-21b2-45da-add8-169ebaddb6af/.bundle/nas-lifion_ml-sdq/recommendation_workflow/dev/files/src/model/DeepWide.py:239, in Deep_wide.forward(self, u, i)
+    231 """
+    232 Args:
+    233     u: user index
+   (...)
+    236     out: predicted rating
+    237 """
+    238 concat_vec_index = self.concat_user_item_vec(u, i)
+--> 239 concat_vec_embs = self.features(concat_vec_index)
+    240 linear_out = self.Linear_part(concat_vec_embs)
+    241 deep_out = self.Deep_part(concat_vec_embs)
+
+File /databricks/python/lib/python3.11/site-packages/torch/nn/modules/module.py:1532, in Module._wrapped_call_impl(self, *args, **kwargs)
+   1530     return self._compiled_call_impl(*args, **kwargs)  # type: ignore[misc]
+   1531 else:
+-> 1532     return self._call_impl(*args, **kwargs)
+
+File /databricks/python/lib/python3.11/site-packages/torch/nn/modules/module.py:1541, in Module._call_impl(self, *args, **kwargs)
+   1536 # If we don't have any hooks, we want to skip the rest of the logic in
+   1537 # this function, and just call forward.
+   1538 if not (self._backward_hooks or self._backward_pre_hooks or self._forward_hooks or self._forward_pre_hooks
+   1539         or _global_backward_pre_hooks or _global_backward_hooks
+   1540         or _global_forward_hooks or _global_forward_pre_hooks):
+-> 1541     return forward_call(*args, **kwargs)
+   1543 try:
+   1544     result = None
+
+File /databricks/python/lib/python3.11/site-packages/torch/nn/modules/sparse.py:163, in Embedding.forward(self, input)
+    162 def forward(self, input: Tensor) -> Tensor:
+--> 163     return F.embedding(
+    164         input, self.weight, self.padding_idx, self.max_norm,
+    165         self.norm_type, self.scale_grad_by_freq, self.sparse)
+
+File /databricks/python/lib/python3.11/site-packages/torch/nn/functional.py:2263, in embedding(input, weight, padding_idx, max_norm, norm_type, scale_grad_by_freq, sparse)
+   2257     input = input.contiguous()
+   2258     # Note [embedding_renorm set_grad_enabled]
+   2259     # XXX: equivalent to
+   2260     # with torch.no_grad():
+   2261     #   torch.embedding_renorm_
+   2262     # remove once script supports set_grad_enabled
+-> 2263     _no_grad_embedding_renorm_(weight, input, max_norm, norm_type)
+   2264 return torch.embedding(weight, input, padding_idx, scale_grad_by_freq, sparse)
+
+File /databricks/python/lib/python3.11/site-packages/torch/nn/functional.py:2151, in _no_grad_embedding_renorm_(weight, input, max_norm, norm_type)
+   2150 def _no_grad_embedding_renorm_(weight: Tensor, input: Tensor, max_norm: float, norm_type: float) -> Tuple[Tensor, Tensor]:
+-> 2151     torch.embedding_renorm_(weight.detach(), input, max_norm, norm_type)
+
+IndexError: select(): index 239 out of range for tensor of size [239, 64] at dimension 0
+Workload failed, see run output for details
