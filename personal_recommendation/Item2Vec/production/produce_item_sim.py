@@ -1,131 +1,393 @@
-#-*-coding:utf8-*-
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-author:linghypshen@gmail.com
-produce train data for item2vec
+@Author  : ling.huang@adp.com
+@File    : DSSM.py
 """
-
-import numpy as np
-from typing import Dict
-from numpy import ndarray
+import os
 import pandas as pd
-from gensim.models import Word2Vec
+import numpy as np
+import torch
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import top_k_accuracy_score, accuracy_score
+from pathlib import Path
 
-def produce_train_data(input_file, out_file):
+# Get the project root directory using pathlib
+ROOT_DIR = Path.cwd().parent.parent
+local_path = ROOT_DIR / "src" / "data" / "input"
+
+local_click_file = "search_click.csv"
+local_click_path_file = local_path / local_click_file
+
+local_item_file = "item_desc.csv"
+local_item_path_file = local_path / local_item_file
+
+
+def load_item_data_file(input_path_file):
     """
     Args:
-        input_file: user behavior CSV file with columns: userid, itemid, rating, timestamp
-        out_file: path to write the output item vectors in Word2Vec text format
-    """
-    # Load data, skip first row
-    df = pd.read_csv(input_file, skiprows=1, header=None, names=["userid", "itemid", "rating", "timestamp"])
-
-    score_thr = 4.0
-    # Filter: valid rows only
-    df = df[df["rating"] >= score_thr]
-
-    # Group by user and get sequences of itemids
-    user_items = df.groupby("userid")["itemid"].apply(lambda x: list(map(str, x)))
-
-    # Convert to list of lists (sentences for Word2Vec)
-    sentences = user_items.tolist()
-
-    # Train the Word2Vec model
-    model = Word2Vec(
-        sentences=sentences,
-        vector_size=128,    # embedding size
-        window=5,           # context window
-        sample=1e-3,        # subsampling
-        negative=5,         # negative samples
-        hs=0,               # disable hierarchical softmax
-        sg=1,               # skip-gram model
-        epochs=50,          # number of training iterations
-        workers=4           # parallel threads
-    )
-
-    # Save item vectors in text format
-    model.wv.save_word2vec_format(out_file, binary=False)
-
-def load_item_vec(input_file):
-    """
-    Args:
-        input_file: path to item vector file
+        input_path_file: user rating file
     Returns:
-        dict: key=itemid, value=np.array of floats (embedding vector)
+        data: DataFrame with columns: item_id, title
     """
-    # Load the file, skipping the first line
-    df = pd.read_csv(input_file, sep=" ", skiprows=1, header=None, quoting=3)
+    data = pd.read_csv(
+        input_path_file,
+        skiprows=1,
+        header=None,
+        names=["item_id", "title"],
+        dtype={"item_id": str, "title": str},
+    )
+    data = data.dropna(subset=['item_id'])
+    # data = data.sample(n=10000)
+    print(data.head(10))
+    return data
 
-    # Expect 1 ID column + 128 dimensions = 129 columns
-    expected_cols = 129
-    if df.shape[1] != expected_cols:
-        raise ValueError(f"Expected {expected_cols} columns, but got {df.shape[1]}.")
 
-    # Remove any rows where the itemid is "</s>" (if present)
-    df = df[df[0] != "</s>"]
-
-    # Convert to dict[itemid] = np.array(vector)
-    item_vec = {
-        str(row[0]): np.array(row[1:], dtype=np.float32)
-        for row in df.itertuples(index=False)
-    }
-
-    return item_vec
-
-def cosine_similarity(vec_a: ndarray, vec_b: ndarray) -> float:
+def load_click_data_file(input_path_file):
     """
-    Compute the cosine similarity between two vectors.
-    """
-    norm_product = np.linalg.norm(vec_a) * np.linalg.norm(vec_b)
-    if norm_product == 0:
-        return 0.0
-    return np.dot(vec_a, vec_b) / norm_product
-
-def cal_item_sim(
-    item_vec: Dict[str, np.ndarray],
-    itemid: str,
-    output_file: str,
-    topk: int = 10
-) -> None:
-    """
-    Calculate top-k similar items for a given item and write to file.
-
     Args:
-        item_vec (dict): {itemid: np.array of embedding vector}
-        itemid (str): The fixed item ID to calculate similarity against
-        output_file (str): Path to write the similar items
-        topk (int): Number of top similar items to output
+        input_path_file: user rating file
+    Returns:
+        data: DataFrame with columns: user_id, item_id, rating
     """
-    if itemid not in item_vec:
-        print(f"[WARN] Item ID '{itemid}' not found in item_vec.")
-        return
+    data = pd.read_csv(input_path_file,
+                       skiprows=1,
+                       header=None,
+                       names=["user_id", "item_id", "rating"],
+                       dtype={"user_id": str, "item_id": str, "rating": float},
+                       )
+    data = data.dropna(subset=['user_id'])
+    data = data.dropna(subset=['item_id'])
+    # data = data.sample(n=10000)
+    print(data.head(10))
+    return data
 
-    target_vec = item_vec[itemid]
 
-    # Create a DataFrame of other items and compute similarity
-    df = pd.DataFrame([
-        (other_id, cosine_similarity(target_vec, vec))
-        for other_id, vec in item_vec.items() if other_id != itemid
-    ], columns=["itemid", "score"])
+class RatingDataset(Dataset):
+    def __init__(self, df, user_lookup, item_lookup):
+        """
+        Args:
+           df: DataFrame with columns: user_id, item_id
+           user_lookup: dict mapping user_id to integer index
+           item_lookup: dict mapping item_id to integer index
+        Returns:
+            None
+        """
+        # map strings to integer indices; unseen IDs map to 0
+        self.user_idx = torch.tensor(
+            [user_lookup.get(u, 0) for u in df["user_id"].values],
+            dtype=torch.long
+        )
+        self.item_idx = torch.tensor(
+            [item_lookup.get(i, 0) for i in df["item_id"].values],
+            dtype=torch.long
+        )
 
-    # Select top-k most similar items
-    df_topk = df.sort_values(by="score", ascending=False).head(topk)
+    def __len__(self):
+        """
+        Args:
+            None
+        Returns:
+            length of the dataset
+        """
+        return len(self.user_idx)
 
-    # Format output string: itemid<TAB>item1_score1;item2_score2;...
-    sim_str = ";".join(f"{row.itemid}_{round(row.score, 3)}" for _, row in df_topk.iterrows())
-    output_line = f"{itemid}\t{sim_str}\n"
+    def __getitem__(self, idx):
+        """
+        Args:
+            idx: index of the item to retrieve
+        Returns:
+            dict with user_id and item_id based on dataframe idx
+        """
+        return {
+            "user_id": self.user_idx[idx],
+            "item_id": self.item_idx[idx],
+        }
 
-    # Write to file
-    with open(output_file, "w") as f:
-        f.write(output_line)
 
-def run_main(input_file, output_file):
-    item_vec = load_item_vec(input_file)
-    cal_item_sim(item_vec, "27", output_file)
+class ItemModel(nn.Module):
+    def __init__(self, unique_item_ids, embedding_dim=96):
+        """
+        Args:
+            unique_item_ids: list of unique item IDs
+            embedding_dim: embedding dimension
+        Returns:
+            None
+        """
+        super().__init__()
+        self.lookup = {v: i + 1 for i, v in enumerate(unique_item_ids)}
+        self.embedding = nn.Embedding(len(self.lookup) + 1, embedding_dim)
+
+    def forward(self, item_ids):
+        """
+        Args:
+            item_ids: list of item IDs
+        Returns:
+            item embeddings for the given item IDs
+        """
+        if isinstance(item_ids, torch.Tensor):
+            return self.embedding(item_ids)
+
+        indices = [self.lookup.get(v, 0) for v in item_ids]
+        idx_tensor = torch.tensor(indices, dtype=torch.long)
+        return self.embedding(idx_tensor)
+
+
+class UserModel(nn.Module):
+    def __init__(self, user_ids, embedding_dim=96):
+        """
+        Args:
+            user_ids: list of unique user IDs
+        Returns:
+            None
+        """
+        super().__init__()
+        self.lookup = {v: i + 1 for i, v in enumerate(user_ids)}
+        self.embedding = nn.Embedding(len(self.lookup) + 1, embedding_dim)
+
+    def forward(self, user_ids):
+        """
+        Args:
+            user_ids: list of user IDs
+        Returns:
+            user embeddings for the given user IDs
+        """
+        if isinstance(user_ids, torch.Tensor):
+            return self.embedding(user_ids)
+        indices = [self.lookup.get(v, 0) for v in user_ids]
+        idx_tensor = torch.tensor(indices, dtype=torch.long)
+        return self.embedding(idx_tensor)
+
+
+class TwoTowers(nn.Module):
+    def __init__(self, user_model, item_model):
+        """
+        Args:
+            user_model: user model as input
+            item_model: item model as input
+        Returns:
+            None
+        """
+        super().__init__()
+        self.user_model = user_model
+        self.item_model = item_model
+
+    def forward(self, batch):
+        """
+        Args:
+            batch: batch of data
+        Returns:
+            user embeddings and item embeddings
+        """
+        user_embeds = self.user_model(batch["user_id"])
+        item_embeds = self.item_model(batch["item_id"])
+        return user_embeds, item_embeds
+
+
+class DNN(nn.Module):
+    def __init__(self, input_dim, hidden_units):
+        """
+        Args:
+            input_dim: input dimension
+            hidden_units: list of hidden units
+        Returns:
+            None
+        """
+        super().__init__()
+        layers = []
+        for i in range(len(hidden_units)):
+            in_dim = input_dim if i == 0 else hidden_units[i - 1]
+            out_dim = hidden_units[i]
+            layers.append(nn.Linear(in_dim, out_dim))
+            layers.append(nn.ReLU())
+        self.network = nn.Sequential(*layers)
+
+    def forward(self, x):
+        """
+        Args:
+            x: input tensor
+        Returns:
+            output tensor
+        """
+        return self.network(x)
+
+
+class CosineSimilarity(nn.Module):
+    def __init__(self, temperature=1.0):
+        """
+        Args:
+            temperature: scaling factor for similarity
+        Returns:
+            None
+        """
+        super().__init__()
+        self.temperature = temperature
+
+    def forward(self, user_emb, item_emb):
+        """
+        Args:
+            user_emb: user embeddings
+            item_emb: item embeddings
+        Returns:
+            similarity score between user and item embeddings
+        """
+        sim = torch.nn.functional.cosine_similarity(user_emb, item_emb, dim=-1)
+        return sim / self.temperature
+
+
+class PredictLayer(nn.Module):
+    def forward(self, x):
+        """
+        Args:
+            x: input tensor
+        Returns:
+            output tensor after applying sigmoid activation
+        """
+        return torch.sigmoid(x).unsqueeze(-1)
+
+
+class DSSM(nn.Module):
+    def __init__(self, user_model, item_model, embedding_dim=96, dnn_units=[64, 32], temperature=1.0):
+        """
+        Args:
+            user_model: user model as input
+            item_model: item model as input
+            embedding_dim: embedding dimension
+            dnn_units: list dimension of hidden units
+            temperature: scaling factor for similarity
+        Returns:
+            None
+        """
+        super().__init__()
+        self.base = TwoTowers(user_model, item_model)
+        self.user_dnn = DNN(embedding_dim, dnn_units)
+        self.item_dnn = DNN(embedding_dim, dnn_units)
+        self.similarity = CosineSimilarity(temperature)
+        self.predict = PredictLayer()
+
+    def forward(self, batch):
+        """
+        Args:
+            batch: batch of data
+        Returns:
+            prediction score for the given batch
+        """
+        user_raw, item_raw = self.base(batch)
+        user_embed = self.user_dnn(user_raw)
+        item_embed = self.item_dnn(item_raw)
+        sim = self.similarity(user_embed, item_embed)
+        return self.predict(sim)
+
+    def training_step(self, batch, optimizer, loss_fn):
+        """
+        Args:
+            batch: batch of data
+            optimizer: optimizer for the model
+            loss_fn: loss function
+        Returns:
+            loss: computed loss value
+        """
+        self.train()
+        optimizer.zero_grad()
+        output = self.forward(batch)
+        labels = torch.ones_like(output)
+        loss = loss_fn(output, labels)
+        loss.backward()
+        optimizer.step()
+        return loss.item()
+
+
+def train_and_evaluate(local_item_path=local_item_path_file, local_click_path=local_click_path_file):
+    """
+    Args:
+        local_item_path: path to item data file
+        local_click_path: path to click data file
+    Returns:
+        None
+    """
+    # 1) load raw CSVs
+    item_df = load_item_data_file(local_item_path)
+    click_df = load_click_data_file(local_click_path)
+
+    # 2) build consistent lookups from raw IDs → ints (1...N)
+    unique_users = click_df["user_id"].unique()
+    unique_items = item_df["item_id"].unique()
+    user_lookup = {v: i + 1 for i, v in enumerate(unique_users)}
+    item_lookup = {v: i + 1 for i, v in enumerate(unique_items)}
+
+    # 3) split & wrap into new Dataset that returns ints, not strs
+    train_df, test_df = train_test_split(click_df, test_size=0.2, random_state=42)
+    train_dataset = RatingDataset(train_df, user_lookup, item_lookup)
+    test_dataset = RatingDataset(test_df, user_lookup, item_lookup)
+
+    train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=512)
+
+    # 4) instantiate your models exactly as before
+    user_model = UserModel(unique_users)
+    item_model = ItemModel(unique_items)
+    model = DSSM(user_model, item_model)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_fn = nn.BCELoss()
+
+    # 5) training
+    for epoch in range(20):
+        total_loss = 0.0
+        for batch in train_loader:
+            loss = model.training_step(batch, optimizer, loss_fn)
+            total_loss += loss
+        print(f"Epoch {epoch + 1}, Training Loss: {total_loss / len(train_loader):.4f}")
+
+    # 6) evaluation
+    model.eval()
+    all_preds, all_labels = [], []
+    with torch.no_grad():
+        for batch in test_loader:
+            preds = model(batch).squeeze().numpy()
+            all_preds.extend(preds)
+            all_labels.extend([1.0] * len(preds))
+
+    # classification accuracy
+    thresholded = [1 if p > 0.5 else 0 for p in all_preds]
+    accuracy = accuracy_score(all_labels, thresholded)
+    print(f"Test Accuracy: {accuracy:.4f}")
+
+    # retrieval metrics
+    print("Computing retrieval metrics...")
+
+    # precompute item embeddings
+    all_item_idx = torch.arange(1, len(unique_items) + 1, dtype=torch.long)
+    with torch.no_grad():
+        item_raw = item_model(all_item_idx)
+        item_embeds = model.item_dnn(item_raw)
+
+    # embed test users
+    test_user_idx = test_dataset.user_idx
+    test_item_idx = test_dataset.item_idx.tolist()
+    with torch.no_grad():
+        user_raw = user_model(test_user_idx)
+        user_embeds = model.user_dnn(user_raw)
+
+    # pairwise cosine
+    sims = torch.nn.functional.cosine_similarity(
+        user_embeds.unsqueeze(1), item_embeds.unsqueeze(0), dim=-1
+    )  # [n_test, n_items]
+
+    ranks = []
+    for i, true_idx in enumerate(test_item_idx):
+        row = sims[i]
+        rank = (row > row[true_idx - 1]).sum().item() + 1
+        ranks.append(rank)
+    mrr = sum(1.0 / r for r in ranks) / len(ranks)
+    recall1 = sum(r <= 1 for r in ranks) / len(ranks)
+    recall5 = sum(r <= 5 for r in ranks) / len(ranks)
+    recall10 = sum(r <= 10 for r in ranks) / len(ranks)
+    recall50 = sum(r <= 50 for r in ranks) / len(ranks)
+    print(f"MRR: {mrr:.4f}, R@1: {recall1:.4f}, R@5: {recall5:.4f}, R@10: {recall10:.4f}, R@50: {recall50:.4f}")
 
 
 if __name__ == "__main__":
-    # produce_train_data("../data/ratings.txt", "../data/item_vec.txt")
-    # item_vec = load_item_vec("../data/item_vec.txt")
-    # print(len(item_vec))
-    # print(item_vec["318"])
-    run_main("../data/item_vec.txt", "../data/sim_result.txt")
+    train_and_evaluate()
