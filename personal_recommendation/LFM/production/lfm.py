@@ -1,85 +1,81 @@
-#-*-coding:utf8-*-
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-author:linghypshen@gmail.com
-lfm model train main function
+@Author  : ling.huang@adp.com
+@File    : LFM.py
 """
-
 import numpy as np
 import operator
 import os
 import pandas as pd
 import random
+from pathlib import Path
 
-def get_item_info(input_file):
+# Get the project root directory using pathlib
+ROOT_DIR = Path.cwd().parent.parent
+local_path = ROOT_DIR / "src" / "data" / "input"
+
+local_click_file = "search_click.csv"
+local_click_path_file = local_path / local_click_file
+
+local_item_file = "item_desc.csv"
+local_item_path_file = local_path / local_item_file
+score_thr = 1
+
+
+def get_item_info(input_path_file):
     """
     Load item info using pandas.
-    Returns a dictionary: key = itemid, value = [title, genre]
+    Args:
+        input_path_file (str): Path and file name of the input file
+    Returns:
+         dictionary: key = itemid, value = [title]
     """
-    if not os.path.exists(input_file):
-        return {}
-
-    # Read the CSV file; assume the first row is the header
-    df = pd.read_csv(input_file, encoding='utf-8')
-
-    # Make sure the file has at least 3 columns
-    if df.shape[1] < 3:
-        return {}
-
-    # Extract itemid, title, and genre
-    # Handle cases where title includes commas by assuming genre is the last column
-    df['itemid'] = df.iloc[:, 0]
-    df['genre'] = df.iloc[:, -1]
-    df['title'] = df.iloc[:, 1:-1].apply(lambda x: ','.join(x.dropna().astype(str)), axis=1)
-
-    item_info = dict(zip(df['itemid'], zip(df['title'], df['genre'])))
+    df = pd.read_csv(input_path_file,
+                     skiprows=1,
+                     header=None,
+                     names=["item_id", "title"],
+                     dtype={"item_id": str, "title": str},
+                     )
+    item_info = dict(zip(df['item_id'], zip(df['title'])))
     return item_info
 
-def get_ave_score(input_file):
+
+def get_ave_score(input_path_file):
     """
     Compute average rating score per item using pandas.
     Args:
-        input_file (str): Path to the user rating file
+        input_path_file (str): Path and file name of the input file
     Returns:
-        dict: key = itemid, value = average score (rounded to 3 decimals)
+        dictionary: key = item_id, value = average score (rounded to 3 decimals)
     """
-    if not os.path.exists(input_file):
-        return {}
 
     # Load the file with pandas, skip bad lines if any
-    df = pd.read_csv(input_file, encoding='utf-8')
-
-    # Ensure there are at least 3 columns: userid, itemid, rating
-    if df.shape[1] < 3:
-        return {}
-
-    # Rename columns if not already named
-    df.columns = ['userid', 'itemid', 'rating'] + df.columns[3:].tolist()
-
-    # Convert ratings to float and group by itemid
-    df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
-    score_series = df.groupby('itemid')['rating'].mean().round(3)
-
+    df = pd.read_csv(input_path_file,
+                     skiprows=1,
+                     header=None,
+                     names=["user_id", "item_id", "rating"],
+                     dtype={"user_id": str, "item_id": str, "rating": float},
+                     )
+    # print(f"avg rating: {df['rating'].mean()}")
+    score_series = df.groupby('item_id')['rating'].mean().round(3)
     return score_series.to_dict()
 
 
-def get_train_data(input_file):
+def get_train_data(input_path_file):
     """
     Generate training data for LFM model using pandas.
     Args:
-        input_file (str): Path to user-item rating CSV file
+        input_path_file (str): Path and file name of the input file
     Returns:
-        list: [(userid, itemid, label), ...]
+        list: [(user_id, item_id, label), ...]
     """
-    if not os.path.exists(input_file):
-        return []
-
-    score_dict = get_ave_score(input_file)
-    score_thr = 4.0
-
-    df = pd.read_csv(input_file)
-    print(df.head())
-    df.columns = ['userid', 'itemid', 'rating'] + df.columns[3:].tolist()
+    score_dict = get_ave_score(input_path_file)
+    df = pd.read_csv(input_path_file)
+    # print(df.head())
+    df.columns = ['user_id', 'item_id', 'rating'] + df.columns[3:].tolist()
     df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
+    # print(df.head())
 
     # Separate into positive and negative interactions
     pos_df = df[df['rating'] >= score_thr].copy()
@@ -90,33 +86,34 @@ def get_train_data(input_file):
     neg_df['label'] = 0
 
     # Map negative ratings with item average scores for sampling
-    neg_df['item_score'] = neg_df['itemid'].map(score_dict)
+    neg_df['item_score'] = neg_df['item_id'].map(score_dict)
 
     train_data = []
 
     # Group by user
-    pos_group = pos_df.groupby('userid')
-    neg_group = neg_df.groupby('userid')
+    pos_group = pos_df.groupby('user_id')
+    neg_group = neg_df.groupby('user_id')
 
-    for userid, pos_items in pos_group:
-        neg_items = neg_group.get_group(userid) if userid in neg_group.groups else pd.DataFrame()
+    for user_id, pos_items in pos_group:
+        neg_items = neg_group.get_group(user_id) if user_id in neg_group.groups else pd.DataFrame()
         data_num = min(len(pos_items), len(neg_items))
         if data_num == 0:
             continue
 
         # Sample positive interactions
-        pos_samples = pos_items[['userid', 'itemid', 'label']].head(data_num).values.tolist()
+        pos_samples = pos_items[['user_id', 'item_id', 'label']].head(data_num).values.tolist()
 
         # Sort negative interactions by average item score descending and sample
         neg_sorted = neg_items.sort_values(by='item_score', ascending=False).head(data_num)
-        neg_samples = neg_sorted[['userid', 'itemid']].copy()
+        neg_samples = neg_sorted[['user_id', 'item_id']].copy()
         neg_samples['label'] = 0
-        neg_samples = neg_samples[['userid', 'itemid', 'label']].values.tolist()
+        neg_samples = neg_samples[['user_id', 'item_id', 'label']].values.tolist()
 
         train_data.extend(pos_samples)
         train_data.extend(neg_samples)
 
     return train_data
+
 
 def lfm_train(train_data, F, alpha, beta, step):
     """
@@ -126,29 +123,29 @@ def lfm_train(train_data, F, alpha, beta, step):
         alpha:regularization factor
         beta: learning rate
         step: iteration num
-    Return:
-        dict: key itemid, value:np.ndarray
-        dict: key userid, value:np.ndarray
+    Returns:
+        dict: key item_id, value:np.ndarray
+        dict: key user_id, value:np.ndarray
     """
     user_vec = {}
     item_vec = {}
     for step_index in range(step):
         random.shuffle(train_data)
-        for userid, itemid, label in train_data:
-            if userid not in user_vec:
-                user_vec[userid] = init_model(F)
-            if itemid not in item_vec:
-                item_vec[itemid] = init_model(F)
+        for user_id, item_id, label in train_data:
+            if user_id not in user_vec:
+                user_vec[user_id] = init_model(F)
+            if item_id not in item_vec:
+                item_vec[item_id] = init_model(F)
 
-            pred = model_predict(user_vec[userid], item_vec[itemid])
+            pred = model_predict(user_vec[user_id], item_vec[item_id])
             delta = label - pred
 
-            user_vec_old = user_vec[userid].copy()
-            item_vec_old = item_vec[itemid].copy()
+            user_vec_old = user_vec[user_id].copy()
+            item_vec_old = item_vec[item_id].copy()
 
             # Gradient updates
-            user_vec[userid] += beta * (delta * item_vec_old - alpha * user_vec_old)
-            item_vec[itemid] += beta * (delta * user_vec_old - alpha * item_vec_old)
+            user_vec[user_id] += beta * (delta * item_vec_old - alpha * user_vec_old)
+            item_vec[item_id] += beta * (delta * user_vec_old - alpha * item_vec_old)
         beta *= 0.9  # Decay learning rate
     return user_vec, item_vec
 
@@ -157,7 +154,7 @@ def init_model(vector_len):
     """
     Args:
         vector_len: the len of vector
-    Return:
+    Returns:
          a ndarray
     """
     return np.random.randn(vector_len)
@@ -169,10 +166,10 @@ def model_predict(user_vector, item_vector):
     Args:
         user_vector: model produce user vector
         item_vector: model produce item vector
-    Return:
-         a num
+    Returns:
+         a number
     """
-    res = np.dot(user_vector, item_vector)/(np.linalg.norm(user_vector)*np.linalg.norm(item_vector))
+    res = np.dot(user_vector, item_vector) / (np.linalg.norm(user_vector) * np.linalg.norm(item_vector))
     return res
 
 
@@ -180,72 +177,74 @@ def model_train_process():
     """
     test lfm model train
     """
-    train_data = get_train_data("../data/ratings.txt")
-    user_vec, item_vec = lfm_train(train_data, 50, 0.01, 0.1, 50)
-    for userid in user_vec:
-        recom_result = give_recom_result(user_vec, item_vec, userid)
-        ana_recom_result(train_data, userid, recom_result)
+    train_data = get_train_data(local_click_path_file)
+    # print(train_data)
+    user_vec, item_vec = lfm_train(train_data, 50, 0.01, 0.1, 100)
+    for user_id in user_vec:
+        recom_result = give_recom_result(user_vec, item_vec, user_id)
+        ana_recom_result(train_data, user_id, recom_result)
 
-def give_recom_result(user_vec, item_vec, userid, fix_num=10):
+
+def give_recom_result(user_vec, item_vec, user_id, fix_num=10):
     """
     Generate top-N recommendation results for a given user using LFM model.
 
     Args:
-        user_vec (dict): user embeddings {userid: vector}
-        item_vec (dict): item embeddings {itemid: vector}
-        userid (str or int): target user ID
+        user_vec (dict): user embeddings {user_id: vector}
+        item_vec (dict): item embeddings {item_id: vector}
+        user_id (str or int): target user ID
         fix_num (int): number of recommendations to return
 
     Returns:
-        list: [(itemid, score), ...] sorted by score descending
+        list: [(item_id, score), ...] sorted by score descending
     """
-    if userid not in user_vec:
+    if user_id not in user_vec:
         return []
 
-    user_vector = user_vec[userid]
+    user_vector = user_vec[user_id]
     record = {}
 
-    for itemid, item_vector in item_vec.items():
+    for item_id, item_vector in item_vec.items():
         # Cosine similarity
         denom = np.linalg.norm(user_vector) * np.linalg.norm(item_vector)
         if denom == 0:
             score = 0
         else:
             score = np.dot(user_vector, item_vector) / denom
-        record[itemid] = score
+        record[item_id] = score
 
     # Sort by score descending and return top-N
     sorted_items = sorted(record.items(), key=operator.itemgetter(1), reverse=True)[:fix_num]
-    recom_list = [(itemid, round(score, 3)) for itemid, score in sorted_items]
+    recom_list = [(item_id, round(score, 3)) for item_id, score in sorted_items]
 
     return recom_list
 
-def ana_recom_result(train_data, userid, recom_list):
+
+def ana_recom_result(train_data, user_id, recom_list):
     """
     Analyze and debug recommendation results for a specific user.
 
     Args:
-        train_data (list): Training data [(userid, itemid, label), ...]
-        userid (str or int): User ID to analyze
-        recom_list (list): Recommendation result from LFM [(itemid, score), ...]
+        train_data (list): Training data [(user_id, item_id, label), ...]
+        user_id (str or int): User ID to analyze
+        recom_list (list): Recommendation result from LFM [(item_id, score), ...]
     """
-    item_info = get_item_info("../data/movies.txt")
-
-    print(f"\n[User {userid}] Ground Truth Liked Items:")
+    item_info = get_item_info(local_item_path_file)
+    print(f"\n[User {user_id}] Ground Truth Liked Items:")
     for data_instance in train_data:
-        tmp_userid, itemid, label = data_instance
-        if tmp_userid == userid and label == 1:
-            info = item_info.get(itemid, ["Unknown Title", "Unknown Genre"])
-            print(f"{itemid}: {info[0]} ({info[1]})")
+        tmp_user_id, item_id, label = data_instance
+        if tmp_user_id == user_id and label == 1:
+            info = item_info.get(item_id, ["Unknown Title"])
+            print(f"{item_id}: {info[0]}")
 
-    print(f"\n[User {userid}] Top-{len(recom_list)} Recommended Items:")
-    for itemid, score in recom_list:
-        info = item_info.get(itemid, ["Unknown Title", "Unknown Genre"])
-        print(f"{itemid}: {info[0]} ({info[1]}) | Score: {score}")
+    print(f"\n[User {user_id}] Top-{len(recom_list)} Recommended Items:")
+    for item_id, score in recom_list:
+        info = item_info.get(item_id, ["Unknown Title"])
+        print(f"{item_id}: {info[0]} | Score: {score}")
 
 
 if __name__ == "__main__":
-    # train_data = get_train_data("../data/ratings.txt")
-    # print(len(train_data))
-
+    # get_item_info(local_item_path_file)
+    # print(get_ave_score(local_click_path_file))
+    get_train_data(local_click_path_file)
     model_train_process()
