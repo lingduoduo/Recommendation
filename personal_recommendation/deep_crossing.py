@@ -2,149 +2,193 @@
 # -*- coding: utf-8 -*-
 """
 @Author  : ling.huang@adp.com
-@File    : Deep-Crossing.py
+@File    : ConentBased.py
 """
 import os
-import numpy as np
 import pandas as pd
-import torch
-from torch import nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
-from sklearn.metrics import precision_score,recall_score,accuracy_score
-import torch.optim as optim
+from pathlib import Path
 
-local_path = "../data"
+from sklearn.metrics import class_likelihood_ratios
 
-local_click_file = "search_click.csv"
-local_click_path_file = os.path.join(local_path, local_click_file)
+# Get the project root directory using pathlib
+ROOT_DIR = Path.cwd().parent.parent
+local_path = ROOT_DIR / "src" / "data" / "input"
 
-local_item_file = "item_desc.csv"
-local_item_path_file = os.path.join(local_path, local_item_file)
+local_click_ts_file = "search_click_ts.csv"
+local_click_ts_path_file = local_path / local_click_ts_file
 
-def produce_train_data(input_rating_path_file, input_item_path_file):
+local_item_clientid_file = "item_desc_clientid.csv"
+local_item_clientid_path_file = local_path / local_item_clientid_file
+
+score_thr = 1
+
+
+def load_click_data(input_path_file=local_click_ts_file):
     """
     Args:
-        input_rating_path_file: user behavior CSV file with columns: userid, item_id, rating, timestamp
-        input_item_path_file: path to write the output item vectors in Word2Vec text format
+        input_path_file: user rating file
+    Returns:
+        dataframe:
+        Load CSV with headers skipped manually (first row is header)
+
     """
-    data = pd.read_csv(input_rating_path_file,
+    return pd.read_csv(
+        input_path_file, 
+        skiprows=1, 
+        header=None,
+        names=["user_id", "item_id", "timestamp", "rating"],
+        dtype={"user_id": str, "item_id": str, "timestamp": int, "rating": float}
+    ).dropna(subset=["timestamp"])
+
+
+def get_ave_score(click_df):
+    """
+    Args:
+        click_df: click dataframe
+    Returns:
+        dict: key = item_id, value = average score (rounded to 3 decimals)
+    """
+    return click_df.groupby("item_id")["rating"].sum().round(3).to_dict()
+
+
+def get_latest_timestamp(click_df):
+    """
+    Args:
+        input_path_file: user rating file (columns: userid, item_id, rating, timestamp)
+    """
+    return click_df["timestamp"].max()
+
+
+def get_time_score(click_df, latest_ts):
+    """
+    Args:
+        click_df: click dataframe
+        timestamp:input timestamp
+    Returns:
+        time score
+    """
+    total_sec = 24 * 60 * 60
+    delta = (latest_ts - click_df["timestamp"]) / total_sec / 100
+    return (1 / (1 + delta)).round(3)
+
+
+def topk_normalized(group, topk=100):
+    """
+    Rank and normalize top-k categories for a user.
+    Args:
+        group (DataFrame): Rows corresponding to a single user's category scores.
+        topk (int): Number of top categories to return.
+    Returns:
+        list of tuples: [(category, normalized_score), ...]
+    """
+    top = group.sort_values("weighted_score", ascending=False).head(topk)
+    total = top["weighted_score"].sum()
+    if total == 0:
+        return list(zip(top["cate"], [0] * len(top)))
+    return list(zip(top["cate"], (top["weighted_score"] / total).round(3)))
+
+
+def get_item_cate(ave_score, input_path_file, topk=100):
+    """
+    Args:
+        ave_score: dict, key = item_id, value = average rating score
+        input_path_file: item info file (with categories)
+    Returns:
+        item_cate: dict, key = item_id, value = {category: ratio}
+        cate_item_sort: dict, key = category, value = top item_ids list
+    """
+    # Read file skipping header
+    df = pd.read_csv(input_path_file,
                      skiprows=1,
                      header=None,
-                     names=["user_id", "item_id", "rating"],
-                     dtype={"user_id": str, "item_id": str, "rating": float},
+                     names=["item_id", "title", "categories"],
+                     dtype={"item_id": str, "title": str, "categories": str},
                      )
-    user_ids = data["user_id"].unique()
-    user_2_idx = {user_id: idx for idx, user_id in enumerate(user_ids)}
+    df = df.dropna(subset=['categories'])
+    df['cate_list'] = df['categories'].str.split('|')
+    df['ratio'] = (1 / df['cate_list'].str.len()).round(3)
 
-    item_df = pd.read_csv(input_item_path_file,
-                     skiprows=1,
-                     header=None,
-                     names=["item_id", "title"],
-                     dtype={"item_id": str, "title": str},
-                     )
-    item_ids = item_df["item_id"].unique()
-    item_2_idx = {item_id: idx for idx, item_id in enumerate(item_ids)}
+    df_expl = (
+        df[['item_id', 'cate_list', 'ratio']]
+        .explode('cate_list')
+        .rename(columns={'cate_list': 'category'})
+    )
+    df_expl['score'] = df_expl['item_id'].map(ave_score).fillna(0)
 
-    data['user_idx'] = data['user_id'].map(user_2_idx)
-    data['item_idx'] = data['item_id'].map(item_2_idx)
-    data['rating'] = (data['rating'] - data['rating'].min()) / (data['rating'].max() - data['rating'].min())
+    item_cate = (df_expl.groupby("item_id", group_keys=False)
+                 .agg({"category": list, "ratio": list})
+                 .apply(lambda x: dict(zip(x["category"], x["ratio"])), axis=1)
+                 .to_dict())
 
-    global_avg = data["rating"].mean()
+    top_items = df_expl.sort_values("score", ascending=False)
+    cate_item_sort = top_items.groupby("category")["item_id"].apply(lambda x: x.head(topk).tolist()).to_dict()
 
-    # create training and test datasets
-    np.random.seed(0)
-    shuffled_index = np.random.permutation(len(data))
-    train_size = int(len(data) * 0.9)
-    train_index = shuffled_index[:train_size]
-    test_index = shuffled_index[train_size:]
-    train_data = data.iloc[train_index]
-    test_data = data.iloc[test_index]
-    print(len(train_data), len(test_data))
-    return train_data, test_data, user_2_idx, item_2_idx, global_avg
-
-# Define custom Dataset
-class InteractionDataset(Dataset):
-    def __init__(self, df):
-        self.users = torch.tensor(df["user_idx"].values, dtype=torch.long)
-        self.items = torch.tensor(df["item_idx"].values, dtype=torch.long)
-        self.labels = torch.tensor(df["rating"].values, dtype=torch.float)
-
-    def __len__(self):
-        return len(self.labels)
-
-    def __getitem__(self, idx):
-        return self.users[idx], self.items[idx], self.labels[idx]
+    return item_cate, cate_item_sort
 
 
-# Define the model
-class RecommenderModel(nn.Module):
-    def __init__(self, num_users, num_items, embedding_dim):
-        super(RecommenderModel, self).__init__()
-        self.user_embedding = nn.Embedding(num_users, embedding_dim)
-        self.item_embedding = nn.Embedding(num_items, embedding_dim)
-        self.fc1 = nn.Linear(embedding_dim * 2, 64)
-        self.fc2 = nn.Linear(64, 1)
+def get_user_profile(click_df, item_cate, latest_ts):
+    """
+    Compute user preferences from ratings and item-category mappings.
 
-    def forward(self, user_indices, item_indices):
-        user_vecs = self.user_embedding(user_indices)
-        item_vecs = self.item_embedding(item_indices)
-        x = torch.cat([user_vecs, item_vecs], dim=1)
-        x = F.relu(self.fc1(x))
-        x = torch.sigmoid(self.fc2(x))
-        return x.squeeze()
+    Args:
+        click_df: click dataframe
+        item_cate (dict): {item_id: {cate: ratio}}
+        input_path_file (str): Path to user rating CSV file.
 
-# Evaluation function
-def evaluate(model, data_loader):
-    model.eval()
-    all_preds = []
-    all_labels = []
-    with torch.no_grad():
-        for user_batch, item_batch, label_batch in data_loader:
-            preds = model(user_batch, item_batch)
-            all_preds.extend(preds.numpy())
-            all_labels.extend(label_batch.numpy())
-    preds_binary = [1 if p >= global_avg else 0 for p in all_preds]
-    all_labels = [int(label) for label in all_labels]
-    precision = precision_score(all_labels, preds_binary, zero_division=0)
-    recall = recall_score(all_labels, preds_binary, zero_division=0)
-    accuracy = accuracy_score(all_labels, preds_binary)
-    return precision, recall, accuracy
+    Returns:
+        dict: {userid: [(cate1, ratio1), (cate2, ratio2), ...]}
+    """
+    df = click_df[click_df["rating"] >= score_thr]
+    df = df[df["item_id"].isin(item_cate)]
+    # Apply time score
+    df["time_score"] = get_time_score(df, latest_ts)
+
+    # Build expanded DataFrame
+    expanded = []
+    for _, row in df.iterrows():
+        for cate, ratio in item_cate[row["item_id"]].items():
+            score = row["rating"] * row["time_score"] * ratio
+            expanded.append((row["user_id"], cate, score))
+
+    df_exp = pd.DataFrame(expanded, columns=["user_id", "cate", "weighted_score"])
+    grouped = df_exp.groupby(["user_id", "cate"])["weighted_score"].sum().reset_index()
+    return {uid: topk_normalized(group.drop(columns="user_id")) for uid, group in grouped.groupby("user_id")}
 
 
-# Initialize model, loss function, and optimizer
-train_data, test_data, user_2_idx, item_2_idx, global_avg = produce_train_data(local_click_path_file, local_item_path_file)
-num_users = len(user_2_idx)
-num_items = len(item_2_idx)
-embedding_dim = 32
+def recommend(user_id, user_profile, cate_item_sort, topk=100):
+    """
+    Args:
+        cate_item_sort (dict): {cate: [sorted_item_id1, sorted_item_id2, ...]}
+        user_profile (dict): {user_id: [(cate, ratio), ...]}
+        user_id (str): user ID to generate recommendations for
+        topk (int): number of total recommendations
+    Returns:
+        dict: {user_id: [item_id1, item_id2, ...]}
+    """
+    # Build a DataFrame from user"s category interests
+    df = pd.DataFrame(user_profile[user_id], columns=["cate", "ratio"])
+    # Calculate number of items to recommend from each category
+    df["num"] = df["ratio"].apply(lambda r: int(topk * r) + 1)
 
-model = RecommenderModel(num_users, num_items, embedding_dim)
-loss_fn = nn.BCELoss()
-optimizer = optim.Adam(model.parameters(), lr=0.01)
+    # Filter to only available categories in cate_item_sort
+    df = df[df["cate"].isin(cate_item_sort)]
 
-# Prepare DataLoaders
-train_dataset = InteractionDataset(train_data)
-test_dataset = InteractionDataset(test_data)
-train_loader = DataLoader(train_dataset, batch_size=512, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=512)
+    # For each category, take the top N items
+    df["items"] = df.apply(lambda row: cate_item_sort[row["cate"]][:row["num"]], axis=1)
 
-# Training loop
-num_epochs = 10
-for epoch in range(num_epochs):
-    model.train()
-    for user_batch, item_batch, label_batch in train_loader:
-        optimizer.zero_grad()
-        preds = model(user_batch, item_batch)
-        loss = loss_fn(preds, label_batch)
-        loss.backward()
-        optimizer.step()
-    print(f"Epoch {epoch + 1}, Loss: {loss.item():.4f}")
+    # Flatten and deduplicate the final recommendation list
+    all_items = df["items"].explode().drop_duplicates().tolist()
+    return {user_id: all_items[:topk]}  # limit final list to topk items
 
-    # Evaluate on training data
-    train_precision, train_recall, train_accuracy = evaluate(model, train_loader)
-    print(f"Train - Precision: {train_precision:.4f}, Recall: {train_recall:.4f}, Accuracy: {train_accuracy:.4f}")
 
-    # Evaluate on test data
-    test_precision, test_recall, test_accuracy = evaluate(model, test_loader)
-    print(f"Test - Precision: {test_precision:.4f}, Recall: {test_recall:.4f}, Accuracy: {test_accuracy:.4f}")
-    print('-' * 80)
+def run_main(user_id):
+    click_df = load_click_data(local_click_ts_path_file)
+    ave_score = get_ave_score(click_df)
+    latest_ts = get_latest_timestamp(click_df)
+    item_cate, cate_item_sort = get_item_cate(ave_score, local_item_clientid_path_file)
+    user_profile = get_user_profile(click_df, item_cate, latest_ts)
+    return recommend(user_id, user_profile, cate_item_sort)
+
+
+if __name__ == "__main__":
+    print(run_main("d362d53c-48d8-4537-864d-a4157701a864"))
