@@ -4,6 +4,14 @@ import numpy as np
 st.page_link("app.py", label="Home", icon="🏠")
 st.page_link("pages/profile.py", label="My profile")
 
+if "key" not in st.session_state:
+    st.session_state.key = ""
+key = st.text_input("Enter your key:", value=st.session_state.key)
+st.session_state.key = key
+st.success(f"Saved key: {st.session_state.key}")
+
+st.page_link("pages/session_state.py", label="Sessions")
+
 st.set_page_config(
     page_title = "Streamlit App",
     page_icon=":shark:"
