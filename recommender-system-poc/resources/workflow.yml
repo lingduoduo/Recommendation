@@ -1,0 +1,129 @@
+resources:
+  jobs:
+    recommendation_workflow:
+      name: recommendation_workflow
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure:
+          - ling.huang@adp.com
+
+      tasks:
+        - task_key: feature_engineering_task
+          job_cluster_key: job_cluster_recommendation
+          spark_python_task:
+            python_file: ../src/ingestion/search_with_click.py
+            source: WORKSPACE
+
+        - task_key: content_based_model
+          job_cluster_key: job_cluster_recommendation
+          depends_on:
+            - task_key: feature_engineering_task
+          spark_python_task:
+            python_file: ../src/model/ContentBased.py
+            source: WORKSPACE
+
+        - task_key: lfm_model
+          job_cluster_key: job_cluster_recommendation
+          depends_on:
+            - task_key: feature_engineering_task
+          spark_python_task:
+            python_file: ../src/model/LFM.py
+            source: WORKSPACE
+
+        - task_key: pr_model
+          job_cluster_key: job_cluster_recommendation
+          depends_on:
+            - task_key: feature_engineering_task
+          spark_python_task:
+            python_file: ../src/model/PR.py
+            source: WORKSPACE
+
+        - task_key: item2vec_model
+          job_cluster_key: job_cluster_recommendation
+          depends_on:
+            - task_key: feature_engineering_task
+          spark_python_task:
+            python_file: ../src/model/Item2Vec.py
+            source: WORKSPACE
+          libraries:
+            - pypi:
+                package: gensim
+                repo: https://artifactory.us.caas.oneadp.com/artifactory/api/pypi/pypi/simple
+
+        - task_key: dssm_model
+          job_cluster_key: job_cluster_recommendation
+          depends_on:
+            - task_key: feature_engineering_task
+          spark_python_task:
+            python_file: ../src/model/DSSM.py
+            source: WORKSPACE
+
+        - task_key: tree_based_model
+          job_cluster_key: job_cluster_recommendation
+          depends_on:
+            - task_key: lfm_model
+            - task_key: pr_model
+            - task_key: item2vec_model
+            - task_key: dssm_model
+          spark_python_task:
+            python_file: ../src/model/TreeBased.py
+            source: WORKSPACE
+          libraries:
+            - pypi:
+                package: lightgbm
+                repo: https://artifactory.us.caas.oneadp.com/artifactory/api/pypi/pypi/simple
+
+        - task_key: deep_wide_model
+          job_cluster_key: job_cluster_recommendation
+          depends_on:
+            - task_key: lfm_model
+            - task_key: pr_model
+            - task_key: item2vec_model
+            - task_key: dssm_model
+          spark_python_task:
+            python_file: ../src/model/DeepWide.py
+            source: WORKSPACE
+
+        - task_key: deep_crossing_model
+          job_cluster_key: job_cluster_recommendation
+          depends_on:
+            - task_key: lfm_model
+            - task_key: pr_model
+            - task_key: item2vec_model
+            - task_key: dssm_model
+          spark_python_task:
+            python_file: ../src/model/DeepCrossing.py
+            source: WORKSPACE
+        
+        - task_key: upload_batch_prediction
+          job_cluster_key: job_cluster_recommendation
+          depends_on:
+            - task_key: content_based_model
+          spark_python_task:
+            python_file: ../src/inference/upload_files.py
+            source: WORKSPACE
+
+      job_clusters:
+        - job_cluster_key: job_cluster_recommendation
+          new_cluster:
+            spark_version: 15.4.x-cpu-ml-scala2.12
+            aws_attributes:
+              first_on_demand: 1
+              availability: SPOT_WITH_FALLBACK
+              zone_id: auto
+              spot_bid_price_percent: 100
+              ebs_volume_type: GENERAL_PURPOSE_SSD
+              ebs_volume_count: 1
+              ebs_volume_size: 100
+            node_type_id: m5d.xlarge
+            driver_node_type_id: m4.xlarge
+            custom_tags:
+              ADP_Cost_Gen_AI: yes
+            enable_elastic_disk: true
+            enable_local_disk_encryption: false
+            runtime_engine: STANDARD
+            data_security_mode: SINGLE_USER
+            autoscale:
+                min_workers: 1
+                max_workers: 8
+            apply_policy_default_values: false

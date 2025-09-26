@@ -1,0 +1,9 @@
+.databricks/
+build/
+dist/
+__pycache__/
+.venv/
+.vscode/
+.idea/
+*.csv
+.env

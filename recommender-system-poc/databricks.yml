@@ -1,0 +1,17 @@
+bundle:
+  name: recommendation_workflow
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adpdc-onedata-share1-dev-us-east.cloud.databricks.com
+    
+  prod:
+    mode: production
+    workspace:
+          host: https://adpdc-onedata-share1-dev-us-east.cloud.databricks.com
