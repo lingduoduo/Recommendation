@@ -187,18 +187,6 @@ To test the project locally, follow these steps:
 3. **Local Test using steamlit app**
     Test the project using a Streamlit app. Ensure you have Streamlit installed snf run the following commands:
     ```bash
-    cd /Users/huanglin/Bitbucket/recommender-system-poc/src/demo
+    cd recommender-system-poc/src/demo
     streamlit run app.py
     ```
-
-### Reference
-
-To use this repo as is with customizations for model registration, model re-training, & Batch Inferencing, Please follow the documention from below link.
-
-https://confluence.es.ad.adp.com/display/cdomlops/Unity+Catalog+Model+Registry
-
-Note:
-
-For documentation on the Databricks asset bundles format used for this project, and for CI/CD configuration, see
-
-https://docs.databricks.com/dev-tools/bundles/index.html.
