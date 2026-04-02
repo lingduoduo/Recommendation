@@ -1,4 +1,5 @@
-[![Testing MLops build](https://github.com/lingduoduo/MLops/actions/workflows/main.yml/badge.svg)](https://github.com/lingduoduo/MLops/actions/workflows/main.yml)
+[![Testing MLops build]
+(https://github.com/lingduoduo/MLops/actions/workflows/mlops.yml/badge.svg)](https://github.com/lingduoduo/MLops/actions/workflows/mlops.yml)
 
 # mlops-sandbox
 
@@ -107,6 +108,13 @@ docker run -p 127.0.0.1:8080:8080 ling-mlops-sandbox
 ## Prediction
 ```
 ./predict.sh
+```
+
+```
+curl http://localhost:8000/health
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"u1","top_k":5}'
 ```
 
 ## Delete Image if needed

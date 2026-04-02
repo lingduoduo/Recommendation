@@ -1,9 +1,5 @@
-streamlit
-boto3
 numpy
 pandas
 scikit-learn
 torch
-torch
 tensorflow
-scikit-learn
