@@ -1,7 +1,5 @@
 #-*-coding:utf8-*-
 """
-author:david
-date:2018****
 some util function
 """
 
@@ -115,4 +113,3 @@ def get_latest_timestamp(input_file):
     fp.close()
     print latest
     #ans is :1476086345
-

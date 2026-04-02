@@ -1,7 +1,5 @@
 # -*-coding:utf8-*-
 """
-author:david
-date:2018****
 feature selection and data selection for tree model
 """
 import pandas as pd

@@ -1,7 +1,5 @@
 # -*-coding:utf8-*-
 """
-author:david
-date:2018****
 train wd model
 """
 from __future__ import division
@@ -228,5 +226,4 @@ def run_main(train_file, test_file,  model_folder, model_export_folder):
 
 if __name__ == "__main__":
     run_main("../data/train.txt", "../data/test.txt", "../data/wd", "../data/wd_export")
-
 

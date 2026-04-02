@@ -1,8 +1,6 @@
 #-*-coding:utf8-*-
 """
 user cf main algo
-author:david
-date:2018***
 """
 from __future__ import division
 import sys

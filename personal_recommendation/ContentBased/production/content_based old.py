@@ -1,7 +1,5 @@
 #-*-coding:utf8-*-
 """
-author:david
-date:2018****
 get up and online recommendation
 """
 

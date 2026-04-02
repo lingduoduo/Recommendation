@@ -1,7 +1,5 @@
 # -*-coding:utf8-*-
 """
-author:david
-date:2018****
 test the performance of the model in the test data for gbdt and gbdt_lr
 """
 from __future__ import division
