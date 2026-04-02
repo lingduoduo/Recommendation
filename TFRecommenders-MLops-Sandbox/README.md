@@ -80,6 +80,15 @@ python src/Recommenders/train_gift_listwise_ranking.py
 ./cli_listwise_ranking.py --jsoninput "kik:user:unknown" "train_listwise_ranking"
 ```
 
+## Test Saved Model locally
+
+```
+python serve.py
+
+curl http://127.0.0.1:8080/health
+{"status": "ok", "model_dir": "/Users/linghuang/Git/Recommendation/TFRecommenders-MLops-Sandbox/model/train_gift_two_tower_pt"}%
+```
+
 ## Build image
 ```
 docker build -t ling-mlops-sandbox .

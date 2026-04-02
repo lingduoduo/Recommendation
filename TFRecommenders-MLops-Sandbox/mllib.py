@@ -96,7 +96,12 @@ def height_human(float_inches):
 def human_readable_payload(predict_value):
     """Takes numpy array and returns back human readable dictionary"""
 
-    height_inches = float(np.round(predict_value, 2))
+    # Accept scalar, 1D, or 2D arrays (e.g., [[inches]] coming from inverse transform)
+    arr = np.asarray(predict_value)
+    if arr.ndim > 0:
+        arr = arr.flatten()[0]
+
+    height_inches = float(np.round(arr, 2))
     result = {
         "height_inches": height_inches,
         "height_human_readable": height_human(height_inches),
