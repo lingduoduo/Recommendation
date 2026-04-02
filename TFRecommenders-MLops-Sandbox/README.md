@@ -1,6 +1,3 @@
-[![Testing MLops build]
-(https://github.com/lingduoduo/MLops/actions/workflows/mlops.yml/badge.svg)](https://github.com/lingduoduo/MLops/actions/workflows/mlops.yml)
-
 # mlops-sandbox
 
 ```
