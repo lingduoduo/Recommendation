@@ -107,13 +107,6 @@ docker run -p 127.0.0.1:8080:8080 ling-mlops-sandbox
 ./predict.sh
 ```
 
-```
-curl http://localhost:8000/health
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":"u1","top_k":5}'
-```
-
 ## Delete Image if needed
 ```
 export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
@@ -143,4 +136,12 @@ docker pull 882748442234.dkr.ecr.us-east-1.amazonaws.com/ling-mlops-sandbox:late
 ## Run the predictions
 ```
 docker run -p 127.0.0.1:8080:8080 882748442234.dkr.ecr.us-east-1.amazonaws.com/ling-mlops-sandbox:latest
+```
+
+
+```
+curl http://localhost:8000/health
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"u1","top_k":5}'
 ```
