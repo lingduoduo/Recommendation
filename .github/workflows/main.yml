@@ -3,6 +3,9 @@ on: [push]
 jobs:
   ci:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: TFRecommenders-MLops-Sandbox
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python 3.11
@@ -20,6 +23,9 @@ jobs:
   cd:
     needs: ci
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: TFRecommenders-MLops-Sandbox
     steps:
       - uses: actions/checkout@v3
       - name: Build Docker
